@@ -1,0 +1,8 @@
+{
+  "appId": "com.aatreya.templefeedback",
+  "appName": "Temple Feedback",
+  "webDir": "build",
+  "server": {
+    "androidScheme": "https"
+  }
+}

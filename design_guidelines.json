@@ -1,0 +1,75 @@
+{
+  "theme": "light",
+  "archetype": "1_organic_earthy",
+  "archetype_description": "Traditional Temple Heritage - Warm, reverent, authoritative, utilizing saffron, maroon, and cream.",
+  "typography": {
+    "heading_font": "Cormorant Garamond",
+    "body_font": "Outfit",
+    "heading_classes": "font-serif tracking-tight text-[#721C24]",
+    "body_classes": "font-sans text-[#1A202C] leading-relaxed",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-semibold",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "body": "text-base",
+      "small": "text-sm text-slate-500 uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "background": "#FDFBF7",
+    "surface": "#FFFFFF",
+    "primary": "#721C24",
+    "primary_hover": "#5A161C",
+    "secondary": "#F4C430",
+    "secondary_hover": "#D4A825",
+    "text_main": "#1A202C",
+    "text_muted": "#4A5568",
+    "border": "#E2E8F0",
+    "accent_saffron": "#FF9933"
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Generous spacing. p-6 or p-8 inside cards.",
+    "border_radius": "rounded-2xl for main containers, rounded-xl for inner cards to maintain soft, organic feel.",
+    "sidebar_strategy": "Magic Curve Sidebar: Sidebar container has maroon gradient `bg-gradient-to-b from-[#721C24] to-[#4A1016]`. Main content area has `bg-[#FDFBF7]` and `rounded-tl-[2.5rem]` to create the curve effect.",
+    "dashboard_grid": "Bento Grid Protocol Mode B. Tight gap-6. Mix of tall (col-span-1 row-span-2) for WhatsApp logs, and wide (col-span-2) for video player / complaints list."
+  },
+  "components": {
+    "cards": "Surface strategy: 'Neumorphism tactile variant but clean'. Solid #FFFFFF background, subtle shadow-sm, 1px top border of saffron/gold (`border-t-2 border-t-[#F4C430]`) on key metric cards.",
+    "buttons": "Primary: bg-[#721C24] text-white hover:bg-[#5A161C] rounded-lg. Secondary: bg-[#FDFBF7] border border-[#721C24] text-[#721C24].",
+    "tables": "Shadcn Table. Clean rows with hover:bg-[#FFF9E6]. Header text small, uppercase, tracking-wider.",
+    "video_player": "Clean theater mode within a card. No heavy gradients around it. Use solid dark background (`bg-slate-900`) for the player container to increase contrast.",
+    "badges": "Status badges: Resolved (bg-[#E6F4EA] text-[#1E7E34]), In Progress (bg-[#FFF4E5] text-[#DD6B20]), Rejected (bg-[#FDE8E8] text-[#C53030])."
+  },
+  "motion_and_interaction": {
+    "hover_states": "Cards lift slightly `-translate-y-1` with increased shadow `shadow-md`. Buttons show a slight scale `scale-[0.98]` on active.",
+    "transitions": "transition-all duration-300 ease-in-out."
+  },
+  "icons_and_assets": {
+    "icon_library": "lucide-react",
+    "icon_style": "Use stroke-width 1.5 for a cleaner, more elegant look.",
+    "images": {
+      "login_background": {
+        "url": "https://images.pexels.com/photos/35960314/pexels-photo-35960314.jpeg",
+        "description": "Stunning view of the intricate architecture of a Hindu temple. Use as a blurred or dark-overlay background for the admin login."
+      },
+      "display_screen_hero": {
+        "url": "https://images.unsplash.com/photo-1764775086606-9b23aa61352a",
+        "description": "Traditional diya lamps glowing. Good for a calm, spiritual loading state or idle screen on the Temple TV."
+      },
+      "temple_placeholder": {
+        "url": "https://images.unsplash.com/photo-1663660408539-c9cbfcedd241",
+        "description": "Large brick temple building. Use as a fallback image for temple profiles."
+      }
+    }
+  },
+  "testing": {
+    "rules": "All interactive elements must have `data-testid` attributes (e.g., `data-testid=\"login-submit-button\"`, `data-testid=\"complaint-resolve-btn\"`)."
+  },
+  "instructions_to_main_agent": [
+    "Implement the 'Magic Curve Sidebar' by setting the body/root background to the maroon gradient, and the main `<main>` content area to `bg-[#FDFBF7] rounded-tl-[2.5rem] p-8` with `min-h-screen`.",
+    "Use pure HTML/Tailwind for the layout structure. Use Shadcn components for complex interactions (Tables, Select, Dialogs).",
+    "DO NOT use Inter or Roboto. Strictly use 'Cormorant Garamond' for headings and 'Outfit' for body.",
+    "Do not use dark mode. Stick to the traditional Light theme with maroon and cream.",
+    "For the Temple TV Display screen, use a bold, high-contrast bento grid layout with large typography so it's readable from a distance."
+  ]
+}

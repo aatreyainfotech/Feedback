@@ -1,0 +1,73 @@
+.App {
+  min-height: 100vh;
+}
+
+.page-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.global-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.App-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+/* Custom scrollbar for sidebar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.feedback-page {
+  background: linear-gradient(135deg, #fffefe 0%, #f6f6ff 45%, #fffefe 100%);
+  min-height: calc(100vh - 70px);
+  padding: 24px;
+  border-radius: 18px;
+}
+
+.feedback-page .bg-white\/90 {
+  background: rgba(255, 255, 255, 0.9) !important;
+}
+
+.feedback-page .table {
+  border-radius: 16px;
+  border: 1px solid #e7e7ef;
+}
+
+.feedback-page .dialog-content {
+  box-shadow: 0 16px 32px rgba(0,0,0,0.16);
+}
+
+.feedback-page p.text-xs.text-gray-500 {
+  color: #4d5f6a;
+  font-size: 0.86rem;
+  margin-bottom: 8px;
+}

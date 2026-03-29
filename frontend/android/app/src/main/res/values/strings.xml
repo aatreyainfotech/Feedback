@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Temple Feedback</string>
+    <string name="title_activity_main">Temple Feedback</string>
+    <string name="package_name">com.aatreya.templefeedback</string>
+    <string name="custom_url_scheme">com.aatreya.templefeedback</string>
+</resources>
