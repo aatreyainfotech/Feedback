@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Allow ALL cleartext (HTTP) traffic globally.
+        Required for Samsung One UI / newer Android WebView which blocks LAN HTTP
+        even when android:usesCleartextTraffic="true" is set in the manifest.
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Explicit cleartext grant for the LAN backend server -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.203.17.202</domain>
+    </domain-config>
+
+    <!-- Allow localhost (Capacitor local server + dev) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { API } from '../utils/api';
+import { API, getApiCandidates, setBackendUrlOverride } from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -14,14 +14,35 @@ const TempleSetup = () => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const findTempleByEmail = async (templeEmail) => {
+    const candidates = getApiCandidates();
+    let lastError = null;
+
+    for (const apiBase of candidates) {
+      try {
+        const response = await axios.get(`${apiBase}/temples`, { timeout: 10000 });
+        const temple = response.data.find(
+          (t) => t.email && t.email.toLowerCase() === templeEmail.toLowerCase()
+        );
+
+        const backendBase = apiBase.replace(/\/api$/, '');
+        setBackendUrlOverride(backendBase);
+        return temple;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError || new Error('Unable to reach backend');
+  };
+
   const handleSetup = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       // Verify temple email exists
-      const response = await axios.get(`${API}/temples`);
-      const temple = response.data.find(t => t.email && t.email.toLowerCase() === email.toLowerCase());
+      const temple = await findTempleByEmail(email);
 
       if (!temple) {
         toast.error('Temple email not found. Please contact admin.');
@@ -48,6 +69,16 @@ const TempleSetup = () => {
 
     } catch (error) {
       toast.error('Failed to register tablet. Please try again.');
+      console.error('Temple registration error:', error.response?.data || error.message);
+      if (error.response?.status === 401) {
+        toast.error('Unauthorized: Check API token');
+      } else if (error.code === 'ECONNABORTED') {
+        toast.error('Request timeout: Check backend connection');
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ENETUNREACH') {
+        toast.error('Cannot reach server: Check network and backend URL');
+      } else if (error.message === 'Network Error') {
+        toast.error('Network Error: Backend may be down or CORS blocked');
+      }
     } finally {
       setLoading(false);
     }

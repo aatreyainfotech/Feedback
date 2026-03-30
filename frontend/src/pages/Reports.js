@@ -65,6 +65,10 @@ const Reports = () => {
   }, [filterTemple]);
 
   const downloadPDF = async () => {
+    if (feedback.length === 0) {
+      toast.error('No feedback data to export');
+      return;
+    }
     const doc = new jsPDF();
 
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -158,11 +162,22 @@ const Reports = () => {
       addFooter(i, pageCount);
     }
 
-    doc.save(`temple-feedback-report-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+    // Use data URI instead of createObjectURL — works correctly in Android WebView / Capacitor
+    const pdfDataUri = doc.output('datauristring');
+    const pdfLink = document.createElement('a');
+    pdfLink.href = pdfDataUri;
+    pdfLink.download = `temple-feedback-report-${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+    document.body.appendChild(pdfLink);
+    pdfLink.click();
+    document.body.removeChild(pdfLink);
     toast.success('PDF downloaded successfully');
   };
 
   const downloadCSV = () => {
+    if (feedback.length === 0) {
+      toast.error('No feedback data to export');
+      return;
+    }
     const headers = ['ID', 'Temple', 'Devotee Name', 'Mobile', 'Service', 'Rating', 'Status', 'Message', 'Date'];
     const rows = feedback.map((item) => [
       item.complaint_id,
@@ -181,13 +196,14 @@ const Reports = () => {
       ...rows.map((row) => row.map((cell) => `"${cell}"`).join(',')),
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
+    // Use base64 data URI — avoids 0-byte file issue in Android WebView / Capacitor
+    const csvBase64 = btoa(unescape(encodeURIComponent(csvContent)));
     const a = document.createElement('a');
-    a.href = url;
+    a.href = `data:text/csv;base64,${csvBase64}`;
     a.download = `temple-feedback-report-${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    document.body.appendChild(a);
     a.click();
-    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
     toast.success('CSV downloaded successfully');
   };
 

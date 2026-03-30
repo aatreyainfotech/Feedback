@@ -6,7 +6,7 @@
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 0 clamp(12px, 3vw, 24px);
 }
 
 .global-center {
@@ -49,7 +49,7 @@
 .feedback-page {
   background: linear-gradient(135deg, #fffefe 0%, #f6f6ff 45%, #fffefe 100%);
   min-height: calc(100vh - 70px);
-  padding: 24px;
+  padding: clamp(12px, 2vw, 24px);
   border-radius: 18px;
 }
 
@@ -70,4 +70,17 @@
   color: #4d5f6a;
   font-size: 0.86rem;
   margin-bottom: 8px;
+}
+
+@media (max-width: 1024px) {
+  .feedback-page {
+    border-radius: 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .feedback-page {
+    min-height: calc(100vh - 56px);
+    border-radius: 10px;
+  }
 }

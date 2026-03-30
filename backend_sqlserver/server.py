@@ -34,8 +34,17 @@ DB_NAME = os.environ.get('DB_NAME', 'ts_feedbackdb')
 DB_USER = os.environ.get('DB_USER', 'ts_feedback_user')
 DB_PASSWORD = os.environ.get('DB_PASSWORD', 'TsFeedback@2026!')
 
-# Connection string
-CONNECTION_STRING = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={DB_SERVER};DATABASE={DB_NAME};UID={DB_USER};PWD={DB_PASSWORD};TrustServerCertificate=yes;"
+# Connection string (Azure SQL compatible)
+CONNECTION_STRING = (
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"SERVER={DB_SERVER};"
+    f"DATABASE={DB_NAME};"
+    f"UID={DB_USER};"
+    f"PWD={DB_PASSWORD};"
+    "Encrypt=yes;"
+    "TrustServerCertificate=no;"
+    "Connection Timeout=30;"
+)
 
 # JWT Configuration
 SECRET_KEY = os.environ.get('JWT_SECRET', 'temple_feedback_secret_key_2026')
@@ -56,11 +65,15 @@ os.makedirs(f"{UPLOAD_DIR}/videos", exist_ok=True)
 app = FastAPI(title="Temple Feedback System API", version="2.0.0")
 
 # CORS Configuration
-cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -3,6 +3,16 @@
   "appName": "Temple Feedback",
   "webDir": "build",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "http",
+    "allowNavigation": [
+      "10.203.17.202",
+      "10.203.17.*",
+      "localhost",
+      "127.0.0.1"
+    ]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": false
   }
 }

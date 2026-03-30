@@ -219,9 +219,18 @@ const PublicFeedbackSubmit = () => {
       await attachStreamToPreview(stream);
       startFaceDetection();
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp8,opus'
-      });
+      // Auto-select a MIME type that this device actually supports (critical for Android)
+      const preferredTypes = [
+        'video/mp4;codecs=h264,aac',
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=vp9,opus',
+        'video/webm',
+        'video/mp4',
+      ];
+      const supportedMime = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+      const mediaRecorder = supportedMime
+        ? new MediaRecorder(stream, { mimeType: supportedMime })
+        : new MediaRecorder(stream);
       
       const chunks = [];
       
@@ -232,7 +241,7 @@ const PublicFeedbackSubmit = () => {
       };
       
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
 
 if (blob.size === 0) {
   toast.error("Video recording failed. Please try again.");
