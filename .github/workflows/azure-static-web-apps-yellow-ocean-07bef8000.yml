@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/azure-static-web-apps-yellow-ocean-07bef8000.yml'
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:
@@ -24,6 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+
+      - name: Set up Yarn
+        run: npm install -g yarn@1.22.22
 
       - name: Install dependencies
         working-directory: frontend
