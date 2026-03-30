@@ -65,9 +65,14 @@ os.makedirs(f"{UPLOAD_DIR}/videos", exist_ok=True)
 app = FastAPI(title="Temple Feedback System API", version="2.0.0")
 
 # CORS Configuration
+_default_cors = (
+    'http://localhost:3000,'
+    'http://localhost:8080,'
+    'https://yellow-ocean-07bef8000.1.azurestaticapps.net'
+)
 cors_origins = [
     origin.strip()
-    for origin in os.environ.get('CORS_ORIGINS', 'http://localhost:3000').split(',')
+    for origin in os.environ.get('CORS_ORIGINS', _default_cors).split(',')
     if origin.strip()
 ]
 app.add_middleware(
