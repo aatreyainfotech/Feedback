@@ -25,7 +25,17 @@ const getRuntimeBackendUrl = () => {
 const envBackendUrl = normalizeUrl(process.env.REACT_APP_BACKEND_URL);
 const storedBackendUrl = getStoredBackendUrl();
 const runtimeBackendUrl = getRuntimeBackendUrl();
-const BACKEND_URL = storedBackendUrl || envBackendUrl || runtimeBackendUrl;
+const isMobileWebView = () => {
+  const host = window.location.hostname || 'localhost';
+  return host === 'localhost' || host === '127.0.0.1';
+};
+
+const isHttpsUrl = (url) => (url || '').startsWith('https://');
+
+// Prefer env URL in production/mobile to avoid stale localStorage overrides.
+const BACKEND_URL = isMobileWebView()
+  ? (envBackendUrl || MOBILE_LAN_FALLBACK || storedBackendUrl || runtimeBackendUrl)
+  : (storedBackendUrl || envBackendUrl || runtimeBackendUrl);
 export const API = `${BACKEND_URL}/api`;
 
 export const getApiCandidates = () => {
@@ -46,6 +56,12 @@ export const setBackendUrlOverride = (backendUrl) => {
   if (!normalized) {
     return;
   }
+
+  // Ignore insecure overrides on mobile when we have cloud HTTPS backend.
+  if (isMobileWebView() && !isHttpsUrl(normalized)) {
+    return;
+  }
+
   try {
     localStorage.setItem(BACKEND_OVERRIDE_KEY, normalized);
   } catch {

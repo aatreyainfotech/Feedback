@@ -74,11 +74,19 @@ _default_cors = (
     'https://yellow-ocean-07bef8000.1.azurestaticapps.net,'
     'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net'
 )
-cors_origins = [
+_required_cors = {
+    'http://localhost',
+    'https://localhost',
+    'capacitor://localhost',
+    'https://yellow-ocean-07bef8000.1.azurestaticapps.net',
+    'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net',
+}
+_env_cors = os.environ.get('CORS_ORIGINS', '')
+cors_origins = sorted({
     origin.strip()
-    for origin in os.environ.get('CORS_ORIGINS', _default_cors).split(',')
+    for origin in f"{_default_cors},{_env_cors}".split(',')
     if origin.strip()
-]
+}.union(_required_cors))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
