@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const BACKEND_OVERRIDE_KEY = 'backend_url';
-const MOBILE_LAN_FALLBACK = 'http://10.203.17.202:8000';
+const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
 
 const normalizeUrl = (url) => (url || '').trim().replace(/\/$/, '');
 
