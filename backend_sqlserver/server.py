@@ -68,6 +68,9 @@ app = FastAPI(title="Temple Feedback System API", version="2.0.0")
 _default_cors = (
     'http://localhost:3000,'
     'http://localhost:8080,'
+    'http://localhost,'
+    'https://localhost,'
+    'capacitor://localhost,'
     'https://yellow-ocean-07bef8000.1.azurestaticapps.net,'
     'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net'
 )
