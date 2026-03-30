@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const BACKEND_OVERRIDE_KEY = 'backend_url';
 const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
+const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
 
 const normalizeUrl = (url) => (url || '').trim().replace(/\/$/, '');
 
@@ -34,8 +35,8 @@ const isHttpsUrl = (url) => (url || '').startsWith('https://');
 
 // Prefer env URL in production/mobile to avoid stale localStorage overrides.
 const BACKEND_URL = isMobileWebView()
-  ? (envBackendUrl || MOBILE_LAN_FALLBACK || storedBackendUrl || runtimeBackendUrl)
-  : (storedBackendUrl || envBackendUrl || runtimeBackendUrl);
+  ? (envBackendUrl || MOBILE_LAN_FALLBACK || CLOUD_BACKEND_FALLBACK || storedBackendUrl || runtimeBackendUrl)
+  : (storedBackendUrl || envBackendUrl || CLOUD_BACKEND_FALLBACK || runtimeBackendUrl);
 export const API = `${BACKEND_URL}/api`;
 
 export const getApiCandidates = () => {
