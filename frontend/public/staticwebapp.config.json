@@ -1,0 +1,15 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/static/*", "/*.{css,js,ico,png,jpg,jpeg,svg,webmanifest,txt}"]
+  },
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/index.html",
+      "statusCode": 200
+    }
+  },
+  "globalHeaders": {
+    "Cache-Control": "no-cache"
+  }
+}
