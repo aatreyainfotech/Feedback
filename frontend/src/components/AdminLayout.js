@@ -1,12 +1,13 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
-import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings, Menu, X } from 'lucide-react';
 import Header from './Header';
 import Footer from './Footer';
 
 const AdminLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -53,11 +54,35 @@ const AdminLayout = () => {
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-b from-[#721C24] to-[#4A1016]">
       <Header logo="/ts-logo.png" />
-      
+
+      {/* Mobile hamburger button */}
+      <button
+        className="md:hidden fixed top-4 left-4 z-50 bg-[#721C24] text-white p-2 rounded-lg shadow-lg"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        {sidebarOpen ? <X size={22} /> : <Menu size={22} />}
+      </button>
+
+      {/* Mobile overlay backdrop */}
+      {sidebarOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/50 z-30"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       <div className="flex flex-1">
-        {/* Magic Curve Sidebar */}
-        <aside className="w-64 flex flex-col p-6 text-white">
-          <div className="mb-8">
+        {/* Sidebar — overlay on mobile, always visible on md+ */}
+        <aside className={`
+          fixed md:relative inset-y-0 left-0 z-40
+          w-64 flex flex-col p-6 text-white
+          bg-gradient-to-b from-[#721C24] to-[#4A1016]
+          transform transition-transform duration-300 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          md:flex
+        `}>
+          <div className="mb-8 mt-12 md:mt-0">
             <h1 className="text-2xl font-bold text-[#F4C430]">Temple Admin</h1>
             <p className="text-sm text-white/70 mt-1">Feedback Management</p>
           </div>
@@ -71,6 +96,7 @@ const AdminLayout = () => {
                   key={item.path}
                   to={item.path}
                   data-testid={`menu-${item.label.toLowerCase().replace(' ', '-')}`}
+                  onClick={() => setSidebarOpen(false)}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${
                     isActive
                       ? 'bg-white/20 shadow-lg scale-105'
@@ -95,8 +121,8 @@ const AdminLayout = () => {
         </aside>
 
         {/* Main Content with Temple Background */}
-        <main 
-          className="flex-1 rounded-tl-[2.5rem] p-8 overflow-y-auto custom-scrollbar relative"
+        <main
+          className="flex-1 rounded-tl-[2.5rem] p-4 md:p-8 overflow-y-auto custom-scrollbar relative"
           style={{
             backgroundImage: 'url(https://images.pexels.com/photos/6416960/pexels-photo-6416960.jpeg?auto=compress&cs=tinysrgb&w=1920)',
             backgroundSize: 'cover',
@@ -110,7 +136,7 @@ const AdminLayout = () => {
           </div>
         </main>
       </div>
-      
+
       <Footer />
     </div>
   );

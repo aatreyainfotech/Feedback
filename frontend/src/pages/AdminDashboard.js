@@ -122,10 +122,10 @@ const AdminDashboard = () => {
   })) || [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-2">Dashboard</h1>
-        <p className="text-[#4A5568]">Overview of all temple feedback and statistics</p>
+        <h1 className="text-2xl sm:text-4xl font-bold tracking-tight mb-2">Dashboard</h1>
+        <p className="text-[#4A5568] text-sm sm:text-base">Overview of all temple feedback and statistics</p>
       </div>
 
       {/* Stats Grid */}

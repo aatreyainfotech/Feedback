@@ -311,7 +311,7 @@ const Administration = () => {
           <h2 className="text-xl font-bold text-[#721C24]">Role & Permission Management</h2>
           <p className="text-sm text-[#4A5568]">Assign roles and permissions to officers</p>
         </div>
-        
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-[#FDFBF7] hover:bg-[#FDFBF7]">
@@ -391,6 +391,7 @@ const Administration = () => {
             ))}
           </TableBody>
         </Table>
+        </div>
         <div className="flex items-center justify-between p-4 bg-white border-t border-slate-200">
           <div className="text-sm text-slate-500">
             Showing {Math.min((currentPage - 1) * rowsPerPage + 1, officers.length)} - {Math.min(currentPage * rowsPerPage, officers.length)} of {officers.length}

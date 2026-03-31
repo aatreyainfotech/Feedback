@@ -177,6 +177,7 @@ const FeedbackMonitoring = () => {
 
       {/* Feedback Table */}
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-[#FDFBF7] hover:bg-[#FDFBF7]">
@@ -274,6 +275,7 @@ const FeedbackMonitoring = () => {
             ))}
           </TableBody>
         </Table>
+        </div>
         <div className="flex items-center justify-between p-4 bg-white border-t border-slate-200">
           <div className="text-sm text-slate-500">
             Showing {Math.min((currentPage - 1) * rowsPerPage + 1, feedback.length)} - {Math.min(currentPage * rowsPerPage, feedback.length)} of {feedback.length}

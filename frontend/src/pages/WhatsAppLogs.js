@@ -45,6 +45,7 @@ const WhatsAppLogs = () => {
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-[#FDFBF7] hover:bg-[#FDFBF7]">
@@ -93,6 +94,7 @@ const WhatsAppLogs = () => {
             ))}
           </TableBody>
         </Table>
+        </div>
         <div className="flex items-center justify-between p-4 bg-white border-t border-slate-200">
           <div className="text-sm text-slate-500">
             Showing {Math.min((currentPage - 1) * rowsPerPage + 1, logs.length)} - {Math.min(currentPage * rowsPerPage, logs.length)} of {logs.length}

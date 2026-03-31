@@ -169,6 +169,7 @@ const OfficerDashboard = () => {
 
       {/* Feedback Table */}
       <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-lg overflow-hidden">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-[#FDFBF7] hover:bg-[#FDFBF7]">
@@ -258,6 +259,7 @@ const OfficerDashboard = () => {
             ))}
           </TableBody>
         </Table>
+        </div>
       </div>
 
       {/* Feedback Detail Dialog */}
