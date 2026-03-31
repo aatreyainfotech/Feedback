@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 
 const AdminLogin = () => {
+  // Secure login - credentials hidden from UI
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -94,7 +95,7 @@ const AdminLogin = () => {
         </form>
 
         <div className="mt-6 text-center text-sm text-[#4A5568]">
-          <p>Default credentials: admin@temple.com / admin123</p>
+          
           <button
             onClick={() => navigate('/officer/login')}
             className="mt-3 text-[#721C24] hover:underline font-medium"
