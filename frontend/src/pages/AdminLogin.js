@@ -94,9 +94,10 @@ const AdminLogin = () => {
         </form>
 
         <div className="mt-6 text-center text-sm text-[#4A5568]">
+          <p>Default credentials: admin@temple.com / admin123</p>
           <button
             onClick={() => navigate('/officer/login')}
-            className="text-[#721C24] hover:underline font-medium"
+            className="mt-3 text-[#721C24] hover:underline font-medium"
           >
             Officer Login →
           </button>
