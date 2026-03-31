@@ -14,7 +14,7 @@ const Footer = () => {
             © {new Date().getFullYear()} Telangana Endowment Department. All rights reserved.
           </p>
           <p className="text-sm">
-            Developed by <span className="text-[#F4C430] font-bold">Aatreya Infotech</span>
+            Developed by <span className="text-[#F4C430] font-bold">AatreyaInfotech</span>
           </p>
         </div>
       </div>
