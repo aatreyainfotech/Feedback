@@ -56,7 +56,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 BCRYPT_ROUNDS = 12
 
 # File upload configuration
-UPLOAD_DIR = os.environ.get('UPLOAD_DIR', 'uploads')
+# On Azure App Service, WEBSITE_SITE_NAME is set; use /home/uploads so files
+# persist across deployments (Azure Files mount). Fall back to 'uploads' locally.
+_azure_site = os.environ.get('WEBSITE_SITE_NAME')
+_default_upload_dir = '/home/uploads' if _azure_site else 'uploads'
+UPLOAD_DIR = os.environ.get('UPLOAD_DIR', _default_upload_dir)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(f"{UPLOAD_DIR}/logos", exist_ok=True)
 os.makedirs(f"{UPLOAD_DIR}/videos", exist_ok=True)
