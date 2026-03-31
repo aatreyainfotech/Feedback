@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 const BACKEND_OVERRIDE_KEY = 'backend_url';
-const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
-const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
+const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net';
+const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net';
 
 const normalizeUrl = (url) => (url || '').trim().replace(/\/$/, '');
 
