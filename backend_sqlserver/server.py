@@ -4,10 +4,10 @@ Temple Feedback Management System - SQL Server Backend
 FastAPI backend with SQL Server database support
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, Query
+from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
@@ -72,7 +72,9 @@ _default_cors = (
     'https://localhost,'
     'capacitor://localhost,'
     'https://yellow-ocean-07bef8000.1.azurestaticapps.net,'
-    'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net'
+    'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net,'
+    'https://aatreya.org,'
+    'https://www.aatreya.org'
 )
 _required_cors = {
     'http://localhost',
@@ -80,6 +82,8 @@ _required_cors = {
     'capacitor://localhost',
     'https://yellow-ocean-07bef8000.1.azurestaticapps.net',
     'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net',
+    'https://aatreya.org',
+    'https://www.aatreya.org',
 }
 _env_cors = os.environ.get('CORS_ORIGINS', '')
 cors_origins = sorted({
@@ -93,6 +97,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Content-Disposition"],
 )
 
 # Mount static files
@@ -1026,25 +1031,59 @@ async def api_upload_video(file: UploadFile = File(...), authorization: str = He
 
 
 @app.get("/api/files/{file_path:path}")
-async def get_file(file_path: str):
-    """Serve uploaded files"""
+async def get_file(file_path: str, request: Request):
+    """Serve uploaded files with Range request support for video streaming"""
     full_path = os.path.join(UPLOAD_DIR, file_path)
-    if os.path.exists(full_path):
-        ext = os.path.splitext(file_path)[1].lower()
-        media_type = None
-        if ext == '.webm':
-            media_type = 'video/webm'
-        elif ext == '.mp4':
-            media_type = 'video/mp4'
-        elif ext in ['.jpg', '.jpeg']:
-            media_type = 'image/jpeg'
-        elif ext == '.png':
-            media_type = 'image/png'
-        elif ext == '.gif':
-            media_type = 'image/gif'
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
 
-        return FileResponse(full_path, media_type=media_type)
-    raise HTTPException(status_code=404, detail="File not found")
+    ext = os.path.splitext(file_path)[1].lower()
+    media_type = 'application/octet-stream'
+    if ext == '.webm':
+        media_type = 'video/webm'
+    elif ext == '.mp4':
+        media_type = 'video/mp4'
+    elif ext in ['.jpg', '.jpeg']:
+        media_type = 'image/jpeg'
+    elif ext == '.png':
+        media_type = 'image/png'
+    elif ext == '.gif':
+        media_type = 'image/gif'
+
+    file_size = os.path.getsize(full_path)
+    range_header = request.headers.get('range')
+
+    if range_header and media_type.startswith('video/'):
+        # Parse Range header e.g. "bytes=0-1023"
+        try:
+            byte_range = range_header.replace('bytes=', '')
+            start_str, end_str = byte_range.split('-')
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+            end = min(end, file_size - 1)
+            chunk_size = end - start + 1
+
+            def iter_file():
+                with open(full_path, 'rb') as f:
+                    f.seek(start)
+                    remaining = chunk_size
+                    while remaining > 0:
+                        data = f.read(min(65536, remaining))
+                        if not data:
+                            break
+                        remaining -= len(data)
+                        yield data
+
+            headers = {
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Accept-Ranges': 'bytes',
+                'Content-Length': str(chunk_size),
+            }
+            return StreamingResponse(iter_file(), status_code=206, media_type=media_type, headers=headers)
+        except Exception:
+            pass  # Fall through to normal FileResponse
+
+    return FileResponse(full_path, media_type=media_type, headers={'Accept-Ranges': 'bytes'})
 
 # =====================================================
 # STARTUP
