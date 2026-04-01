@@ -7,7 +7,7 @@ FastAPI backend with SQL Server database support
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
@@ -19,6 +19,7 @@ import os
 import json
 import logging
 import aiofiles
+from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -64,6 +65,148 @@ UPLOAD_DIR = os.environ.get('UPLOAD_DIR', _default_upload_dir)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(f"{UPLOAD_DIR}/logos", exist_ok=True)
 os.makedirs(f"{UPLOAD_DIR}/videos", exist_ok=True)
+
+SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+_upload_roots = [
+    UPLOAD_DIR,
+    os.path.join(SERVER_DIR, 'uploads'),
+    os.path.join(os.getcwd(), 'uploads'),
+]
+if _azure_site:
+    _upload_roots.extend([
+        '/home/site/wwwroot/uploads',
+    ])
+UPLOAD_ROOTS = list(dict.fromkeys(os.path.abspath(path) for path in _upload_roots if path))
+
+
+def normalize_upload_path(file_path: str) -> str:
+    """Convert stored upload values into a safe relative path under uploads."""
+    if not file_path:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    parsed = urlparse(str(file_path))
+    raw_path = parsed.path or str(file_path)
+    normalized = unquote(raw_path).replace('\\', '/').strip()
+
+    api_marker = '/api/files/'
+    uploads_marker = '/uploads/'
+    if api_marker in normalized:
+        normalized = normalized.split(api_marker, 1)[1]
+    elif uploads_marker in normalized:
+        normalized = normalized.split(uploads_marker, 1)[1]
+
+    normalized = normalized.lstrip('/')
+    while normalized.startswith('uploads/'):
+        normalized = normalized[len('uploads/'):]
+
+    normalized = os.path.normpath(normalized).replace('\\', '/')
+    if normalized in ('', '.'):
+        raise HTTPException(status_code=404, detail="File not found")
+    if normalized.startswith('../') or normalized == '..' or os.path.isabs(normalized):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    return normalized
+
+
+def get_primary_upload_path(file_path: str) -> str:
+    """Return the canonical location for new uploads."""
+    normalized = normalize_upload_path(file_path)
+    return os.path.join(UPLOAD_DIR, normalized)
+
+
+def resolve_existing_upload_path(file_path: str) -> tuple[str, str]:
+    """Resolve an uploaded file from the current or legacy storage locations."""
+    normalized = normalize_upload_path(file_path)
+    for root in UPLOAD_ROOTS:
+        candidate = os.path.abspath(os.path.join(root, normalized))
+        if os.path.commonpath([root, candidate]) != root:
+            continue
+        if os.path.exists(candidate):
+            return normalized, candidate
+
+    raise HTTPException(status_code=404, detail="File not found")
+
+
+def get_media_type(file_path: str) -> str:
+    """Infer response content type from file extension."""
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == '.webm':
+        return 'video/webm'
+    if ext == '.mp4':
+        return 'video/mp4'
+    if ext == '.mov':
+        return 'video/quicktime'
+    if ext == '.mkv':
+        return 'video/x-matroska'
+    if ext in ['.jpg', '.jpeg']:
+        return 'image/jpeg'
+    if ext == '.png':
+        return 'image/png'
+    if ext == '.gif':
+        return 'image/gif'
+    return 'application/octet-stream'
+
+
+def save_upload_record(file_path: str, original_filename: str, file_ext: str, file_size: int, uploaded_by: Optional[str], file_content: bytes):
+    """Persist upload metadata and a durable SQL copy for Azure retention."""
+    execute_query(
+        """INSERT INTO file_uploads (
+               id, filename, original_filename, file_path, file_type, file_size, uploaded_by, file_blob, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETUTCDATE())""",
+        (
+            str(uuid.uuid4()),
+            os.path.basename(file_path),
+            original_filename,
+            file_path,
+            file_ext,
+            file_size,
+            uploaded_by,
+            pyodbc.Binary(file_content),
+        )
+    )
+
+
+def get_upload_blob(file_path: str):
+    """Load durable upload content from Azure SQL when the filesystem copy is missing."""
+    normalized = normalize_upload_path(file_path)
+    return execute_query(
+        """SELECT TOP 1 file_blob, file_size, file_type
+           FROM file_uploads
+           WHERE file_path = ? AND file_blob IS NOT NULL
+           ORDER BY created_at DESC""",
+        (normalized,),
+        fetch_one=True,
+    )
+
+
+def build_blob_response(file_path: str, file_content: bytes, request: Request):
+    """Serve SQL-stored content with optional byte range support for videos."""
+    media_type = get_media_type(file_path)
+    file_size = len(file_content)
+    headers = {'Accept-Ranges': 'bytes'}
+    range_header = request.headers.get('range')
+
+    if range_header and media_type.startswith('video/') and file_size > 0:
+        try:
+            byte_range = range_header.replace('bytes=', '')
+            start_str, end_str = byte_range.split('-')
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+            end = min(end, file_size - 1)
+            if start < 0 or start > end:
+                raise ValueError('Invalid range')
+
+            chunk = file_content[start:end + 1]
+            headers.update({
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Content-Length': str(len(chunk)),
+            })
+            return Response(content=chunk, status_code=206, media_type=media_type, headers=headers)
+        except Exception:
+            pass
+
+    headers['Content-Length'] = str(file_size)
+    return Response(content=file_content, media_type=media_type, headers=headers)
 
 # Initialize FastAPI
 app = FastAPI(title="Temple Feedback System API", version="2.0.0")
@@ -183,6 +326,17 @@ class OfficerCreate(BaseModel):
     temple_id: Optional[str] = None
     role: Optional[str] = "officer"
     permissions: Optional[List[str]] = ["view_feedback", "update_status"]
+
+class OfficerUpdate(BaseModel):
+    name: str
+    email: str
+    password: Optional[str] = None
+    temple_id: Optional[str] = None
+    role: Optional[str] = "officer"
+    permissions: Optional[List[str]] = ["view_feedback", "update_status"]
+
+class OfficerPasswordReset(BaseModel):
+    password: str
 
 class OfficerRoleUpdate(BaseModel):
     role: str
@@ -465,11 +619,14 @@ async def upload_temple_logo(temple_id: str, file: UploadFile = File(...), curre
     """Upload temple logo"""
     filename = f"{uuid.uuid4()}{os.path.splitext(file.filename)[1]}"
     file_path = f"logos/{filename}"
-    full_path = f"{UPLOAD_DIR}/{file_path}"
+    full_path = get_primary_upload_path(file_path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    content = await file.read()
     
     async with aiofiles.open(full_path, 'wb') as f:
-        content = await file.read()
         await f.write(content)
+
+    save_upload_record(file_path, file.filename or filename, os.path.splitext(filename)[1].lower(), len(content), None, content)
     
     execute_query(
         "UPDATE temples SET logo_path = ?, updated_at = GETUTCDATE() WHERE id = ?",
@@ -559,6 +716,77 @@ async def create_officer(officer: OfficerCreate, current_admin = Depends(get_cur
         "role": officer.role,
         "message": "Officer created successfully"
     }
+
+@app.put("/api/officers/{officer_id}")
+async def update_officer(officer_id: str, officer: OfficerUpdate, current_admin = Depends(get_current_admin)):
+    """Update officer details"""
+    existing_officer = execute_query(
+        "SELECT id FROM officers WHERE id = ?",
+        (officer_id,),
+        fetch_one=True
+    )
+    if not existing_officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    duplicate_email = execute_query(
+        "SELECT id FROM officers WHERE email = ? AND id <> ?",
+        (officer.email, officer_id),
+        fetch_one=True
+    )
+    if duplicate_email:
+        raise HTTPException(status_code=400, detail="Email already exists")
+
+    temple_name = None
+    if officer.temple_id:
+        temple = execute_query("SELECT name FROM temples WHERE id = ?", (officer.temple_id,), fetch_one=True)
+        if temple:
+            temple_name = temple['name']
+
+    permissions_json = json.dumps(officer.permissions or ['view_feedback', 'update_status'])
+
+    if officer.password:
+        hashed_pw = hash_password(officer.password)
+        execute_query(
+            """UPDATE officers
+               SET name = ?, email = ?, password = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
+               WHERE id = ?""",
+            (officer.name, officer.email, hashed_pw, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
+        )
+    else:
+        execute_query(
+            """UPDATE officers
+               SET name = ?, email = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
+               WHERE id = ?""",
+            (officer.name, officer.email, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
+        )
+
+    return {
+        "id": officer_id,
+        "name": officer.name,
+        "email": officer.email,
+        "temple_name": temple_name,
+        "role": officer.role or 'officer',
+        "message": "Officer updated successfully"
+    }
+
+@app.put("/api/officers/{officer_id}/reset-password")
+async def reset_officer_password(officer_id: str, payload: OfficerPasswordReset, current_admin = Depends(get_current_admin)):
+    """Reset officer password"""
+    existing_officer = execute_query(
+        "SELECT id FROM officers WHERE id = ?",
+        (officer_id,),
+        fetch_one=True
+    )
+    if not existing_officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    hashed_pw = hash_password(payload.password)
+    execute_query(
+        "UPDATE officers SET password = ?, updated_at = GETUTCDATE() WHERE id = ?",
+        (hashed_pw, officer_id)
+    )
+
+    return {"message": "Password reset successfully"}
 
 @app.put("/api/officers/{officer_id}/role")
 async def update_officer_role(officer_id: str, role_update: OfficerRoleUpdate, current_admin = Depends(get_current_admin)):
@@ -728,11 +956,14 @@ async def create_feedback_with_video(
     # Save video
     video_filename = f"{uuid.uuid4()}{os.path.splitext(video.filename)[1]}"
     video_path = f"videos/{video_filename}"
-    full_path = f"{UPLOAD_DIR}/{video_path}"
+    full_path = get_primary_upload_path(video_path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
     
     async with aiofiles.open(full_path, 'wb') as f:
         content = await video.read()
         await f.write(content)
+
+    save_upload_record(video_path, video.filename or video_filename, os.path.splitext(video_filename)[1].lower(), len(content), None, content)
     
     feedback_id = str(uuid.uuid4())
     complaint_id = generate_complaint_id()
@@ -958,7 +1189,7 @@ async def upload_logo(file: UploadFile = File(...), authorization: str = Header(
         raise HTTPException(status_code=400, detail="File too large")
 
     output_name = f"logos/{uuid.uuid4()}{file_ext}"
-    path = os.path.join(UPLOAD_DIR, output_name)
+    path = get_primary_upload_path(output_name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     async with aiofiles.open(path, 'wb') as f:
@@ -973,10 +1204,7 @@ async def upload_logo(file: UploadFile = File(...), authorization: str = Header(
         except JWTError:
             uploaded_by = None
 
-    execute_query(
-        "INSERT INTO file_uploads (id, filename, original_filename, file_path, file_type, file_size, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())",
-        (str(uuid.uuid4()), os.path.basename(path), file.filename, output_name, file_ext, len(file_content), uploaded_by)
-    )
+    save_upload_record(output_name, file.filename, file_ext, len(file_content), uploaded_by, file_content)
 
     return {"path": output_name}
 
@@ -1006,7 +1234,7 @@ async def upload_video(file: UploadFile = File(...), authorization: str = Header
         raise HTTPException(status_code=400, detail="File too large")
 
     output_name = f"videos/{uuid.uuid4()}{file_ext}"
-    path = os.path.join(UPLOAD_DIR, output_name)
+    path = get_primary_upload_path(output_name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     async with aiofiles.open(path, 'wb') as f:
@@ -1020,10 +1248,7 @@ async def upload_video(file: UploadFile = File(...), authorization: str = Header
         except JWTError:
             uploaded_by = None
 
-    execute_query(
-        "INSERT INTO file_uploads (id, filename, original_filename, file_path, file_type, file_size, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, GETUTCDATE())",
-        (str(uuid.uuid4()), os.path.basename(path), file.filename, output_name, file_ext, len(file_content), uploaded_by)
-    )
+    save_upload_record(output_name, file.filename, file_ext, len(file_content), uploaded_by, file_content)
 
     return {"path": output_name}
 
@@ -1037,22 +1262,16 @@ async def api_upload_video(file: UploadFile = File(...), authorization: str = He
 @app.get("/api/files/{file_path:path}")
 async def get_file(file_path: str, request: Request):
     """Serve uploaded files with Range request support for video streaming"""
-    full_path = os.path.join(UPLOAD_DIR, file_path)
-    if not os.path.exists(full_path):
-        raise HTTPException(status_code=404, detail="File not found")
+    normalized_path = normalize_upload_path(file_path)
+    media_type = get_media_type(normalized_path)
 
-    ext = os.path.splitext(file_path)[1].lower()
-    media_type = 'application/octet-stream'
-    if ext == '.webm':
-        media_type = 'video/webm'
-    elif ext == '.mp4':
-        media_type = 'video/mp4'
-    elif ext in ['.jpg', '.jpeg']:
-        media_type = 'image/jpeg'
-    elif ext == '.png':
-        media_type = 'image/png'
-    elif ext == '.gif':
-        media_type = 'image/gif'
+    try:
+        file_path, full_path = resolve_existing_upload_path(normalized_path)
+    except HTTPException:
+        blob_record = get_upload_blob(normalized_path)
+        if blob_record and blob_record.get('file_blob') is not None:
+            return build_blob_response(normalized_path, bytes(blob_record['file_blob']), request)
+        raise
 
     file_size = os.path.getsize(full_path)
     range_header = request.headers.get('range')
@@ -1115,6 +1334,15 @@ async def startup():
             IF COL_LENGTH('feedback', 'officer_notes') IS NULL
             BEGIN
                 ALTER TABLE feedback ADD officer_notes NVARCHAR(MAX) NULL;
+            END
+            """
+        )
+
+        execute_query(
+            """
+            IF COL_LENGTH('file_uploads', 'file_blob') IS NULL
+            BEGIN
+                ALTER TABLE file_uploads ADD file_blob VARBINARY(MAX) NULL;
             END
             """
         )

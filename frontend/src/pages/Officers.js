@@ -6,24 +6,30 @@ import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+
+const defaultFormData = {
+  name: '',
+  email: '',
+  password: '',
+  temple_id: '',
+  role: 'officer',
+  permissions: ['view_feedback', 'update_status'],
+};
 
 const Officers = () => {
   const [officers, setOfficers] = useState([]);
   const [temples, setTemples] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [editingOfficerId, setEditingOfficerId] = useState(null);
+  const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
+  const [resetOfficer, setResetOfficer] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage] = useState(5);
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    temple_id: '',
-    role: 'officer',
-    permissions: ['view_feedback', 'update_status'],
-  });
+  const [formData, setFormData] = useState(defaultFormData);
 
   const roleOptions = [
     { value: 'officer', label: 'Officer', description: 'Can view and update feedback status' },
@@ -45,6 +51,50 @@ const Officers = () => {
     fetchOfficers();
     fetchTemples();
   }, []);
+
+  const resetForm = () => {
+    setFormData(defaultFormData);
+    setEditingOfficerId(null);
+  };
+
+  const handleDialogChange = (isOpen) => {
+    setOpen(isOpen);
+    if (!isOpen) {
+      resetForm();
+    }
+  };
+
+  const handleCreateClick = () => {
+    resetForm();
+    setOpen(true);
+  };
+
+  const handleEdit = (officer) => {
+    setEditingOfficerId(officer.id);
+    setFormData({
+      name: officer.name || '',
+      email: officer.email || '',
+      password: '',
+      temple_id: officer.temple_id || '',
+      role: officer.role || 'officer',
+      permissions: officer.permissions || ['view_feedback', 'update_status'],
+    });
+    setOpen(true);
+  };
+
+  const handleResetPasswordOpen = (officer) => {
+    setResetOfficer(officer);
+    setNewPassword('');
+    setResetPasswordOpen(true);
+  };
+
+  const handleResetPasswordClose = (isOpen) => {
+    setResetPasswordOpen(isOpen);
+    if (!isOpen) {
+      setResetOfficer(null);
+      setNewPassword('');
+    }
+  };
 
   const fetchOfficers = async () => {
     try {
@@ -69,10 +119,15 @@ const Officers = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/officers', formData);
-      toast.success('Officer created successfully');
+      if (editingOfficerId) {
+        await api.put(`/officers/${editingOfficerId}`, formData);
+        toast.success('Officer updated successfully');
+      } else {
+        await api.post('/officers', formData);
+        toast.success('Officer created successfully');
+      }
       setOpen(false);
-      setFormData({ name: '', email: '', password: '', temple_id: '', role: 'officer', permissions: ['view_feedback', 'update_status'] });
+      resetForm();
       fetchOfficers();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Operation failed');
@@ -87,6 +142,19 @@ const Officers = () => {
       fetchOfficers();
     } catch (error) {
       toast.error('Failed to delete officer');
+    }
+  };
+
+  const handlePasswordReset = async (e) => {
+    e.preventDefault();
+    if (!resetOfficer) return;
+
+    try {
+      await api.put(`/officers/${resetOfficer.id}/reset-password`, { password: newPassword });
+      toast.success('Password reset successfully');
+      handleResetPasswordClose(false);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to reset password');
     }
   };
 
@@ -109,11 +177,12 @@ const Officers = () => {
           <p className="text-[#4A5568]">Manage temple officers and access</p>
         </div>
 
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={handleDialogChange}>
           <DialogTrigger asChild>
             <Button
               data-testid="add-officer-button"
               className="bg-[#721C24] hover:bg-[#5A161C] text-white"
+              onClick={handleCreateClick}
             >
               <Plus size={20} className="mr-2" />
               Add Officer
@@ -121,7 +190,9 @@ const Officers = () => {
           </DialogTrigger>
           <DialogContent className="bg-white">
             <DialogHeader>
-              <DialogTitle className="text-[#721C24] text-2xl">Add New Officer</DialogTitle>
+              <DialogTitle className="text-[#721C24] text-2xl">
+                {editingOfficerId ? 'Edit Officer' : 'Add New Officer'}
+              </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -150,15 +221,17 @@ const Officers = () => {
                 />
               </div>
               <div>
-                <Label htmlFor="password" className="text-[#721C24]">Password</Label>
+                <Label htmlFor="password" className="text-[#721C24]">
+                  {editingOfficerId ? 'Password (leave blank to keep current password)' : 'Password'}
+                </Label>
                 <Input
                   id="password"
                   type="password"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                   data-testid="officer-password-input"
-                  placeholder="Enter password"
-                  required
+                  placeholder={editingOfficerId ? 'Leave blank to keep current password' : 'Enter password'}
+                  required={!editingOfficerId}
                   className="mt-1.5"
                 />
               </div>
@@ -228,7 +301,43 @@ const Officers = () => {
                 data-testid="submit-officer-button"
                 className="w-full bg-[#721C24] hover:bg-[#5A161C] text-white"
               >
-                Create Officer
+                {editingOfficerId ? 'Update Officer' : 'Create Officer'}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={resetPasswordOpen} onOpenChange={handleResetPasswordClose}>
+          <DialogContent className="bg-white">
+            <DialogHeader>
+              <DialogTitle className="text-[#721C24] text-2xl">Reset Officer Password</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handlePasswordReset} className="space-y-4">
+              <div>
+                <Label className="text-[#721C24]">Officer</Label>
+                <div className="mt-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {resetOfficer ? `${resetOfficer.name} (${resetOfficer.email})` : ''}
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="reset-password" className="text-[#721C24]">New Password</Label>
+                <Input
+                  id="reset-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  required
+                  minLength={6}
+                  className="mt-1.5"
+                />
+              </div>
+              <Button
+                type="submit"
+                data-testid="reset-password-submit"
+                className="w-full bg-[#721C24] hover:bg-[#5A161C] text-white"
+              >
+                Reset Password
               </Button>
             </form>
           </DialogContent>
@@ -278,15 +387,38 @@ const Officers = () => {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(officer.id)}
-                    data-testid={`delete-officer-${officer.id}`}
-                    className="text-red-600 hover:bg-red-50"
-                  >
-                    <Trash2 size={16} />
-                  </Button>
+                  <div className="flex items-center justify-end gap-1 sm:gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEdit(officer)}
+                      data-testid={`edit-officer-${officer.id}`}
+                      className="text-[#721C24] hover:bg-[#FFF1F2]"
+                    >
+                      <Pencil size={16} className="mr-1" />
+                      <span className="hidden sm:inline">Edit</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleResetPasswordOpen(officer)}
+                      data-testid={`reset-password-${officer.id}`}
+                      className="text-amber-700 hover:bg-amber-50"
+                    >
+                      <KeyRound size={16} className="mr-1" />
+                      <span className="hidden sm:inline">Reset Password</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(officer.id)}
+                      data-testid={`delete-officer-${officer.id}`}
+                      className="text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 size={16} className="mr-1" />
+                      <span className="hidden sm:inline">Delete</span>
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
