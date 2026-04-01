@@ -20,7 +20,7 @@ const FeedbackMonitoring = () => {
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
 
-  const videoPath = (selectedFeedback?.video_path || selectedFeedback?.video_url || '').replace(/^\/+/, '');
+  const videoPath = (selectedFeedback?.video_url || selectedFeedback?.video_path || '').replace(/^\/+/, '');
   const encodedVideoPath = videoPath ? videoPath.split('/').map(encodeURIComponent).join('/') : '';
   const videoSrc = encodedVideoPath ? `${API}/files/${encodedVideoPath}` : null;
 
@@ -244,7 +244,7 @@ const FeedbackMonitoring = () => {
                   )}
                 </TableCell>
                 <TableCell className="text-center">
-                  {item.video_path ? (
+                  {(item.video_url || item.video_path) ? (
                     <button
                       onClick={() => setSelectedFeedback(item)}
                       data-testid={`play-video-${item.id}`}

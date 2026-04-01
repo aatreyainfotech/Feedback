@@ -179,6 +179,37 @@ def get_upload_blob(file_path: str):
     )
 
 
+def get_feedback_video_path(feedback_record: dict) -> Optional[str]:
+    """Choose the first valid stored video path for a feedback record."""
+    candidates = []
+    for key in ('video_url', 'video_path'):
+        value = feedback_record.get(key)
+        if value and value not in candidates:
+            candidates.append(value)
+
+    for candidate in candidates:
+        try:
+            normalized = normalize_upload_path(candidate)
+        except HTTPException:
+            continue
+
+        try:
+            resolve_existing_upload_path(normalized)
+            return normalized
+        except HTTPException:
+            blob_record = get_upload_blob(normalized)
+            if blob_record and blob_record.get('file_blob') is not None:
+                return normalized
+
+    for candidate in candidates:
+        try:
+            return normalize_upload_path(candidate)
+        except HTTPException:
+            continue
+
+    return None
+
+
 def build_blob_response(file_path: str, file_content: bytes, request: Request):
     """Serve SQL-stored content with optional byte range support for videos."""
     media_type = get_media_type(file_path)
@@ -877,32 +908,36 @@ async def get_feedback(
     query += " ORDER BY created_at DESC"
     
     feedback_list = execute_query(query, tuple(params) if params else None, fetch_all=True)
-    
-    return [
-        {
-            "id": str(f['id']),
-            "complaint_id": f['complaint_id'],
-            "temple_id": str(f['temple_id']) if f['temple_id'] else None,
-            "temple_name": f['temple_name'],
-            "user_name": f['user_name'],
-            "user_mobile": f['user_mobile'],
-            "service": f['service'],
-            "rating": f['rating'],
-            "message": f['message'],
-            "video_url": f.get('video_url') or f.get('video_path'),
-            "video_path": f.get('video_url') or f.get('video_path'),
-            "status": f['status'],
-            "officer_id": str(f['officer_id']) if f['officer_id'] else None,
-            "officer_name": f['officer_name'],
-            "assigned_officer_id": str(f['officer_id']) if f['officer_id'] else None,
-            "assigned_officer_name": f['officer_name'],
-            "resolution_notes": f['resolution_notes'],
-            "officer_notes": f.get('officer_notes') or f.get('resolution_notes'),
-            "created_at": f['created_at'].isoformat() if f['created_at'] else None,
-            "resolved_at": f['resolved_at'].isoformat() if f['resolved_at'] else None
-        }
-        for f in feedback_list
-    ]
+
+    response_items = []
+    for feedback_item in feedback_list:
+        video_path = get_feedback_video_path(feedback_item)
+        response_items.append(
+            {
+                "id": str(feedback_item['id']),
+                "complaint_id": feedback_item['complaint_id'],
+                "temple_id": str(feedback_item['temple_id']) if feedback_item['temple_id'] else None,
+                "temple_name": feedback_item['temple_name'],
+                "user_name": feedback_item['user_name'],
+                "user_mobile": feedback_item['user_mobile'],
+                "service": feedback_item['service'],
+                "rating": feedback_item['rating'],
+                "message": feedback_item['message'],
+                "video_url": video_path,
+                "video_path": video_path,
+                "status": feedback_item['status'],
+                "officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
+                "officer_name": feedback_item['officer_name'],
+                "assigned_officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
+                "assigned_officer_name": feedback_item['officer_name'],
+                "resolution_notes": feedback_item['resolution_notes'],
+                "officer_notes": feedback_item.get('officer_notes') or feedback_item.get('resolution_notes'),
+                "created_at": feedback_item['created_at'].isoformat() if feedback_item['created_at'] else None,
+                "resolved_at": feedback_item['resolved_at'].isoformat() if feedback_item['resolved_at'] else None,
+            }
+        )
+
+    return response_items
 
 
 @app.get("/api/feedback/officer")
@@ -1343,6 +1378,18 @@ async def startup():
             IF COL_LENGTH('file_uploads', 'file_blob') IS NULL
             BEGIN
                 ALTER TABLE file_uploads ADD file_blob VARBINARY(MAX) NULL;
+            END
+            """
+        )
+
+        execute_query(
+            """
+            IF COL_LENGTH('feedback', 'video_path') IS NOT NULL
+            BEGIN
+                UPDATE feedback
+                SET video_path = video_url
+                WHERE video_url IS NOT NULL
+                  AND (video_path IS NULL OR video_path <> video_url);
             END
             """
         )

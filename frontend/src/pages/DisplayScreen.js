@@ -120,7 +120,7 @@ const DisplayScreen = () => {
             </div>
 
             {/* Video Indicator */}
-            {item.video_path && (
+            {(item.video_url || item.video_path) && (
               <div className="mt-3 flex items-center gap-2 text-[#721C24]">
                 <div className="w-2 h-2 bg-[#721C24] rounded-full animate-pulse"></div>
                 <span className="text-sm font-medium">Video Available</span>
