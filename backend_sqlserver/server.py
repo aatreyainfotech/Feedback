@@ -149,15 +149,16 @@ def get_media_type(file_path: str) -> str:
 
 def save_upload_record(file_path: str, original_filename: str, file_ext: str, file_size: int, uploaded_by: Optional[str], file_content: bytes):
     """Persist upload metadata and a durable SQL copy for Azure retention."""
+    normalized_path = normalize_upload_path(file_path)
     execute_query(
         """INSERT INTO file_uploads (
                id, filename, original_filename, file_path, file_type, file_size, uploaded_by, file_blob, created_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, GETUTCDATE())""",
         (
             str(uuid.uuid4()),
-            os.path.basename(file_path),
+            os.path.basename(normalized_path),
             original_filename,
-            file_path,
+            normalized_path,
             file_ext,
             file_size,
             uploaded_by,
@@ -169,12 +170,36 @@ def save_upload_record(file_path: str, original_filename: str, file_ext: str, fi
 def get_upload_blob(file_path: str):
     """Load durable upload content from Azure SQL when the filesystem copy is missing."""
     normalized = normalize_upload_path(file_path)
+    normalized_forward_slashes = normalized.replace('\\', '/')
+    basename = os.path.basename(normalized)
     return execute_query(
         """SELECT TOP 1 file_blob, file_size, file_type
            FROM file_uploads
-           WHERE file_path = ? AND file_blob IS NOT NULL
-           ORDER BY created_at DESC""",
-        (normalized,),
+           WHERE file_blob IS NOT NULL
+             AND (
+                 file_path = ?
+                 OR REPLACE(file_path, '\\', '/') = ?
+                 OR REPLACE(file_path, '\\', '/') LIKE ?
+                 OR REPLACE(file_path, '\\', '/') LIKE ?
+                 OR filename = ?
+             )
+           ORDER BY CASE
+                        WHEN file_path = ? THEN 0
+                        WHEN REPLACE(file_path, '\\', '/') = ? THEN 1
+                        WHEN filename = ? THEN 2
+                        ELSE 3
+                    END,
+                    created_at DESC""",
+        (
+            normalized,
+            normalized_forward_slashes,
+            f"%/uploads/{normalized_forward_slashes}",
+            f"%/{normalized_forward_slashes}",
+            basename,
+            normalized,
+            normalized_forward_slashes,
+            basename,
+        ),
         fetch_one=True,
     )
 
