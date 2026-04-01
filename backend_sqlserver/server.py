@@ -335,12 +335,6 @@ def get_feedback_video_path(feedback_record: dict) -> Optional[str]:
         if repaired_path:
             return repaired_path
 
-    for candidate in candidates:
-        try:
-            return normalize_upload_path(candidate)
-        except HTTPException:
-            continue
-
     return None
 
 
