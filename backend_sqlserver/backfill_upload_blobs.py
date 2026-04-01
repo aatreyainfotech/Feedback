@@ -10,6 +10,7 @@ import argparse
 import mimetypes
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
@@ -225,13 +226,25 @@ def insert_blob(cursor: pyodbc.Cursor, metadata: dict, file_content: bytes, file
     )
 
 
-def main() -> int:
-    args = parse_args()
+def run_backfill(
+    dry_run: bool = False,
+    limit: int = 0,
+    include_existing: bool = False,
+    verbose: bool = False,
+    log: Optional[Callable[[str], None]] = None,
+) -> dict:
     upload_roots = get_upload_roots()
+
+    def emit(message: str) -> None:
+        if log:
+            log(message)
+        else:
+            print(message)
 
     conn = get_connection()
     cursor = conn.cursor()
 
+    found_candidates = 0
     processed = 0
     written = 0
     skipped_missing = 0
@@ -239,40 +252,41 @@ def main() -> int:
     failed = 0
 
     try:
-        ensure_blob_column(cursor, args.dry_run)
+        ensure_blob_column(cursor, dry_run)
         candidates = fetch_candidate_paths(cursor)
         paths = sorted(candidates)
-        if args.limit > 0:
-            paths = paths[:args.limit]
+        found_candidates = len(paths)
+        if limit > 0:
+            paths = paths[:limit]
 
-        print(f'Found {len(paths)} candidate upload paths')
+        emit(f'Found {len(paths)} candidate upload paths')
         for normalized_path in paths:
             metadata = candidates[normalized_path]
             processed += 1
             existing_row = fetch_existing_upload_row(cursor, normalized_path)
 
-            if existing_row and existing_row['has_blob'] and not args.include_existing:
+            if existing_row and existing_row['has_blob'] and not include_existing:
                 skipped_existing += 1
-                if args.verbose:
-                    print(f'SKIP existing blob: {normalized_path}')
+                if verbose:
+                    emit(f'SKIP existing blob: {normalized_path}')
                 continue
 
             disk_path = resolve_disk_path(normalized_path, upload_roots)
             if not disk_path:
                 skipped_missing += 1
-                print(f'MISSING file on disk: {normalized_path}')
+                emit(f'MISSING file on disk: {normalized_path}')
                 continue
 
             try:
                 file_content = disk_path.read_bytes()
             except OSError as exc:
                 failed += 1
-                print(f'ERROR reading {normalized_path}: {exc}')
+                emit(f'ERROR reading {normalized_path}: {exc}')
                 continue
 
-            if args.dry_run:
+            if dry_run:
                 action = 'UPDATE' if existing_row else 'INSERT'
-                print(f'{action} {normalized_path} <- {disk_path}')
+                emit(f'{action} {normalized_path} <- {disk_path}')
                 continue
 
             try:
@@ -281,25 +295,48 @@ def main() -> int:
                 else:
                     insert_blob(cursor, metadata, file_content, len(file_content))
                 written += 1
-                if args.verbose:
-                    print(f'OK {normalized_path}')
+                if verbose:
+                    emit(f'OK {normalized_path}')
             except pyodbc.Error as exc:
                 failed += 1
-                print(f'ERROR writing {normalized_path}: {exc}')
+                emit(f'ERROR writing {normalized_path}: {exc}')
 
-        if args.dry_run:
+        if dry_run:
             conn.rollback()
         else:
             conn.commit()
 
-        print(
+        emit(
             f'Processed={processed} Written={written} '
             f'SkippedExisting={skipped_existing} SkippedMissing={skipped_missing} Failed={failed}'
         )
-        return 0 if failed == 0 else 1
+        return {
+            'dry_run': dry_run,
+            'limit': limit,
+            'include_existing': include_existing,
+            'verbose': verbose,
+            'found_candidates': found_candidates,
+            'processed': processed,
+            'written': written,
+            'skipped_existing': skipped_existing,
+            'skipped_missing': skipped_missing,
+            'failed': failed,
+            'success': failed == 0,
+        }
     finally:
         cursor.close()
         conn.close()
+
+
+def main() -> int:
+    args = parse_args()
+    result = run_backfill(
+        dry_run=args.dry_run,
+        limit=args.limit,
+        include_existing=args.include_existing,
+        verbose=args.verbose,
+    )
+    return 0 if result['success'] else 1
 
 
 if __name__ == '__main__':

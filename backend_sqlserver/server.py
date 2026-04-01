@@ -4,7 +4,7 @@ Temple Feedback Management System - SQL Server Backend
 FastAPI backend with SQL Server database support
 """
 
-from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, Query, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, Form, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -21,6 +21,8 @@ import logging
 import aiofiles
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
+
+from backfill_upload_blobs import run_backfill
 
 # Load environment variables
 load_dotenv()
@@ -77,6 +79,7 @@ if _azure_site:
         '/home/site/wwwroot/uploads',
     ])
 UPLOAD_ROOTS = list(dict.fromkeys(os.path.abspath(path) for path in _upload_roots if path))
+BACKFILL_JOBS: dict[str, dict] = {}
 
 
 def normalize_upload_path(file_path: str) -> str:
@@ -453,6 +456,45 @@ def execute_query(query: str, params: tuple = None, fetch_one: bool = False, fet
         cursor.close()
         conn.close()
 
+
+def trim_backfill_logs(messages: list[str], limit: int = 200) -> list[str]:
+    """Keep the most recent backfill log lines small enough for API responses."""
+    if len(messages) <= limit:
+        return messages
+    return messages[-limit:]
+
+
+def run_backfill_job(job_id: str, request: 'UploadBackfillRequest') -> None:
+    """Execute a backfill job and persist the latest status in memory."""
+    job = BACKFILL_JOBS.get(job_id)
+    if not job:
+        return
+
+    job['status'] = 'running'
+    job['started_at'] = datetime.utcnow().isoformat()
+    job['messages'] = trim_backfill_logs(job.get('messages', []) + ['Backfill started'])
+
+    try:
+        result = run_backfill(
+            dry_run=request.dry_run,
+            limit=request.limit,
+            include_existing=request.include_existing,
+            verbose=request.verbose,
+            log=lambda message: job.__setitem__(
+                'messages',
+                trim_backfill_logs(job.get('messages', []) + [message]),
+            ),
+        )
+        job['status'] = 'completed' if result.get('success') else 'failed'
+        job['result'] = result
+    except Exception as exc:
+        logger.exception('Upload blob backfill failed')
+        job['status'] = 'failed'
+        job['error'] = str(exc)
+        job['messages'] = trim_backfill_logs(job.get('messages', []) + [f'ERROR: {exc}'])
+    finally:
+        job['finished_at'] = datetime.utcnow().isoformat()
+
 # =====================================================
 # PYDANTIC MODELS
 # =====================================================
@@ -517,6 +559,13 @@ class FeedbackStatusUpdate(BaseModel):
 
 class FeedbackAssign(BaseModel):
     officer_id: str
+
+
+class UploadBackfillRequest(BaseModel):
+    dry_run: bool = True
+    limit: int = Field(default=100, ge=0, le=10000)
+    include_existing: bool = False
+    verbose: bool = False
 
 # =====================================================
 # HELPER FUNCTIONS
@@ -1255,8 +1304,58 @@ async def get_dashboard_stats(current_admin = Depends(get_current_admin)):
     """Alias endpoint for dashboard statistics"""
     return await get_stats(current_admin)
 
-    
-    return stats
+
+@app.post("/api/admin/uploads/backfill")
+async def trigger_upload_backfill(
+    request: UploadBackfillRequest,
+    background_tasks: BackgroundTasks,
+    current_admin = Depends(get_current_admin),
+):
+    """Trigger a one-time upload blob backfill into Azure SQL."""
+    active_job = next(
+        (
+            job for job in BACKFILL_JOBS.values()
+            if job.get('status') in {'queued', 'running'}
+        ),
+        None,
+    )
+    if active_job:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'message': 'A backfill job is already in progress',
+                'job_id': active_job['job_id'],
+            },
+        )
+
+    job_id = str(uuid.uuid4())
+    BACKFILL_JOBS[job_id] = {
+        'job_id': job_id,
+        'status': 'queued',
+        'requested_at': datetime.utcnow().isoformat(),
+        'requested_by': current_admin['id'],
+        'request': request.model_dump(),
+        'messages': ['Backfill queued'],
+        'result': None,
+        'error': None,
+    }
+    background_tasks.add_task(run_backfill_job, job_id, request)
+
+    return {
+        'job_id': job_id,
+        'status': 'queued',
+        'message': 'Upload blob backfill started',
+        'request': request.model_dump(),
+    }
+
+
+@app.get("/api/admin/uploads/backfill/{job_id}")
+async def get_upload_backfill_status(job_id: str, current_admin = Depends(get_current_admin)):
+    """Get the status of a previously triggered upload blob backfill job."""
+    job = BACKFILL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Backfill job not found')
+    return job
 
 @app.get("/api/officer/stats")
 async def get_officer_stats(current_officer = Depends(get_current_officer)):
