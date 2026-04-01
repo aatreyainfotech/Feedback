@@ -179,6 +179,106 @@ def get_upload_blob(file_path: str):
     )
 
 
+def get_bounded_edit_distance(left: str, right: str, max_distance: int = 3) -> Optional[int]:
+    """Return a small edit distance for near-matching filenames, otherwise None."""
+    if abs(len(left) - len(right)) > max_distance:
+        return None
+
+    previous_row = list(range(len(right) + 1))
+    for left_index, left_char in enumerate(left, start=1):
+        current_row = [left_index]
+        smallest_value = left_index
+        for right_index, right_char in enumerate(right, start=1):
+            substitution_cost = 0 if left_char == right_char else 1
+            value = min(
+                previous_row[right_index] + 1,
+                current_row[right_index - 1] + 1,
+                previous_row[right_index - 1] + substitution_cost,
+            )
+            current_row.append(value)
+            if value < smallest_value:
+                smallest_value = value
+
+        if smallest_value > max_distance:
+            return None
+        previous_row = current_row
+
+    distance = previous_row[-1]
+    return distance if distance <= max_distance else None
+
+
+def find_nearest_upload_path(file_path: str, created_at: Optional[datetime] = None) -> Optional[str]:
+    """Recover a likely intended upload path when stored feedback paths contain minor typos."""
+    normalized = normalize_upload_path(file_path)
+    expected_name = os.path.basename(normalized)
+    expected_ext = os.path.splitext(expected_name)[1].lower()
+    if not expected_name or not expected_ext:
+        return None
+
+    params = [f"%{expected_ext}"]
+    query = """
+        SELECT TOP 200
+            file_path,
+            created_at,
+            CASE WHEN file_blob IS NULL THEN 0 ELSE 1 END AS has_blob
+        FROM file_uploads
+        WHERE file_path LIKE ?
+    """
+    if created_at:
+        query += """
+          AND created_at BETWEEN DATEADD(HOUR, -6, ?) AND DATEADD(HOUR, 6, ?)
+        """
+        params.extend([created_at, created_at])
+
+    query += " ORDER BY created_at DESC"
+    upload_rows = execute_query(query, tuple(params), fetch_all=True)
+
+    best_match = None
+    best_distance = None
+    best_time_delta = None
+
+    for upload_row in upload_rows:
+        candidate_path = upload_row.get('file_path')
+        if not candidate_path:
+            continue
+
+        try:
+            candidate_path = normalize_upload_path(candidate_path)
+        except HTTPException:
+            continue
+
+        candidate_name = os.path.basename(candidate_path)
+        if os.path.splitext(candidate_name)[1].lower() != expected_ext:
+            continue
+
+        distance = get_bounded_edit_distance(expected_name, candidate_name)
+        if distance is None:
+            continue
+
+        try:
+            resolve_existing_upload_path(candidate_path)
+            available = True
+        except HTTPException:
+            available = bool(upload_row.get('has_blob'))
+
+        if not available:
+            continue
+
+        candidate_created_at = upload_row.get('created_at')
+        time_delta = abs((candidate_created_at - created_at).total_seconds()) if candidate_created_at and created_at else float('inf')
+
+        if (
+            best_match is None
+            or distance < best_distance
+            or (distance == best_distance and time_delta < best_time_delta)
+        ):
+            best_match = candidate_path
+            best_distance = distance
+            best_time_delta = time_delta
+
+    return best_match
+
+
 def get_feedback_video_path(feedback_record: dict) -> Optional[str]:
     """Choose the first valid stored video path for a feedback record."""
     candidates = []
@@ -200,6 +300,15 @@ def get_feedback_video_path(feedback_record: dict) -> Optional[str]:
             blob_record = get_upload_blob(normalized)
             if blob_record and blob_record.get('file_blob') is not None:
                 return normalized
+
+    fallback_created_at = feedback_record.get('created_at')
+    for candidate in candidates:
+        try:
+            repaired_path = find_nearest_upload_path(candidate, fallback_created_at)
+        except HTTPException:
+            repaired_path = None
+        if repaired_path:
+            return repaired_path
 
     for candidate in candidates:
         try:
@@ -1303,6 +1412,15 @@ async def get_file(file_path: str, request: Request):
     try:
         file_path, full_path = resolve_existing_upload_path(normalized_path)
     except HTTPException:
+        repaired_path = find_nearest_upload_path(normalized_path)
+        if repaired_path:
+            try:
+                file_path, full_path = resolve_existing_upload_path(repaired_path)
+            except HTTPException:
+                blob_record = get_upload_blob(repaired_path)
+                if blob_record and blob_record.get('file_blob') is not None:
+                    return build_blob_response(repaired_path, bytes(blob_record['file_blob']), request)
+
         blob_record = get_upload_blob(normalized_path)
         if blob_record and blob_record.get('file_blob') is not None:
             return build_blob_response(normalized_path, bytes(blob_record['file_blob']), request)
