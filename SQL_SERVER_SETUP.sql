@@ -138,6 +138,7 @@ CREATE TABLE file_uploads (
     file_type NVARCHAR(100),
     file_size BIGINT,
     uploaded_by NVARCHAR(255),
+    file_blob VARBINARY(MAX),
     created_at DATETIME2 DEFAULT GETUTCDATE()
 );
 GO
