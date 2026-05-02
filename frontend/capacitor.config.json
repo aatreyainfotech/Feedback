@@ -6,6 +6,9 @@
     "androidScheme": "http",
     "allowNavigation": [
       "aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net",
+      "aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net",
+      "fb.aatreya.org",
+      "*.aatreya.org",
       "yellow-ocean-07bef8000.1.azurestaticapps.net",
       "10.203.17.202",
       "10.203.17.*",

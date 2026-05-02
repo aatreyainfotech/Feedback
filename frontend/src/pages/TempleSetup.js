@@ -20,7 +20,8 @@ const TempleSetup = () => {
 
     for (const apiBase of candidates) {
       try {
-        const response = await axios.get(`${apiBase}/temples`, { timeout: 10000 });
+        // Allow up to 60s per candidate so Azure SQL can wake from auto-pause on the first request.
+        const response = await axios.get(`${apiBase}/temples`, { timeout: 60000 });
         const temple = response.data.find(
           (t) => t.email && t.email.toLowerCase() === templeEmail.toLowerCase()
         );

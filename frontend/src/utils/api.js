@@ -1,9 +1,11 @@
 import axios from 'axios';
 
 const BACKEND_OVERRIDE_KEY = 'backend_url';
-const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net';
-const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net';
-const DEFAULT_TIMEOUT_MS = 15000;
+const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
+const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
+// Azure SQL serverless can take 30-60s to wake from auto-pause; use a generous timeout
+// so the very first request after the backend was idle does not surface as a Network Error.
+const DEFAULT_TIMEOUT_MS = 60000;
 const DEFAULT_GET_CACHE_TTL_MS = 10000;
 const STATIC_GET_CACHE_TTL_MS = 60000;
 
