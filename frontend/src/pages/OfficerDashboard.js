@@ -17,6 +17,8 @@ const OfficerDashboard = () => {
   const [officerNotes, setOfficerNotes] = useState('');
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const rowsPerPage = 5;
 
   const videoPath = (selectedFeedback?.video_url || selectedFeedback?.video_path || '').replace(/^\/+/, '');
   const encodedVideoPath = videoPath ? videoPath.split('/').map(encodeURIComponent).join('/') : '';
@@ -135,6 +137,14 @@ const OfficerDashboard = () => {
     return <div className="text-center py-8">Loading...</div>;
   }
 
+  const totalPages = Math.max(1, Math.ceil(feedback.length / rowsPerPage));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedFeedback = feedback.slice((safePage - 1) * rowsPerPage, safePage * rowsPerPage);
+  const handlePageChange = (newPage) => {
+    if (newPage < 1 || newPage > totalPages) return;
+    setCurrentPage(newPage);
+  };
+
   const statCards = [
     {
       title: 'Total Feedback',
@@ -227,7 +237,7 @@ const OfficerDashboard = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {feedback.map((item) => (
+            {pagedFeedback.map((item) => (
               <TableRow
                 key={item.id}
                 data-testid={`officer-feedback-row-${item.id}`}
@@ -283,6 +293,39 @@ const OfficerDashboard = () => {
             ))}
           </TableBody>
         </Table>
+        </div>
+        <div className="flex items-center justify-between p-4 bg-white border-t border-slate-200">
+          <div className="text-sm text-slate-500">
+            Showing {feedback.length === 0 ? 0 : (safePage - 1) * rowsPerPage + 1} - {Math.min(safePage * rowsPerPage, feedback.length)} of {feedback.length}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handlePageChange(safePage - 1)}
+              disabled={safePage === 1}
+              className="px-3 py-1 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Prev
+            </button>
+            {[...Array(totalPages)].map((_, idx) => {
+              const page = idx + 1;
+              return (
+                <button
+                  key={page}
+                  onClick={() => handlePageChange(page)}
+                  className={`px-3 py-1 rounded-lg border ${page === safePage ? 'border-[#721C24] bg-[#721C24] text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}
+                >
+                  {page}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => handlePageChange(safePage + 1)}
+              disabled={safePage === totalPages}
+              className="px-3 py-1 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
