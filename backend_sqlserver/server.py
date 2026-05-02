@@ -1449,6 +1449,23 @@ async def get_feedback(
     offset: int = Query(0, ge=0),
 ):
     """Get feedback quickly with optional filters and pagination."""
+    return _query_feedback(
+        temple_id=temple_id,
+        status=status,
+        officer_id=officer_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def _query_feedback(
+    temple_id: Optional[str] = None,
+    status: Optional[str] = None,
+    officer_id: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
+):
+    """Internal helper that returns feedback list (safe to call from other handlers)."""
     cache_key = f"feedback:list:{temple_id or 'all'}:{status or 'all'}:{officer_id or 'all'}:{limit or 'all'}:{offset}"
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -1463,7 +1480,7 @@ async def get_feedback(
         WHERE 1=1
     """
     params = []
-    
+
     if temple_id:
         query += " AND temple_id = ?"
         params.append(temple_id)
@@ -1473,11 +1490,11 @@ async def get_feedback(
     if officer_id:
         query += " AND officer_id = ?"
         params.append(officer_id)
-    
+
     query += " ORDER BY created_at DESC"
     if limit is not None:
-        query += f" OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-    
+        query += f" OFFSET {int(offset)} ROWS FETCH NEXT {int(limit)} ROWS ONLY"
+
     feedback_list = execute_query(query, tuple(params) if params else None, fetch_all=True)
     response_items = [serialize_feedback_item(feedback_item) for feedback_item in feedback_list]
     set_cached_response(cache_key, response_items, ttl=5)
@@ -1500,13 +1517,13 @@ async def get_officer_feedback(current_officer = Depends(get_current_officer)):
     role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
 
     if (not temple_id) or role in ('commissioner', 'asst_commissioner'):
-        return await get_feedback()
+        return _query_feedback()
 
     if role in ('supervisor', 'eo'):
-        return await get_feedback(temple_id=str(temple_id))
+        return _query_feedback(temple_id=str(temple_id))
 
     officer_id = str(current_officer['id'])
-    return await get_feedback(officer_id=officer_id)
+    return _query_feedback(officer_id=officer_id)
 
 
 @app.get("/api/display/live-feed")
