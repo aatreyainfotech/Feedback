@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings, Menu, X, ShieldCheck } from 'lucide-react';
 import Header from './Header';
 import Footer from './Footer';
 
@@ -8,6 +8,7 @@ const AdminLayout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -27,11 +28,12 @@ const AdminLayout = () => {
     }
 
     const userRole = user?.role;
-    console.log('AdminLayout auth check', { token, user, userRole });
 
-    if (!token || !user || userRole !== 'admin') {
+    if (!token || !user || (userRole !== 'admin' && userRole !== 'superadmin')) {
       navigate('/login');
+      return;
     }
+    setAuthUser(user);
   }, [navigate]);
 
   const handleLogout = () => {
@@ -40,16 +42,26 @@ const AdminLayout = () => {
     navigate('/login');
   };
 
-  const menuItems = [
-    { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { path: '/admin/temples', icon: Building2, label: 'Temples' },
-    { path: '/admin/officers', icon: Users, label: 'Officers' },
-    { path: '/admin/services', icon: List, label: 'Services' },
-    { path: '/admin/feedback', icon: MessageSquare, label: 'Feedback' },
-    { path: '/admin/whatsapp-logs', icon: MessageCircle, label: 'WhatsApp Logs' },
-    { path: '/admin/reports', icon: FileText, label: 'Reports' },
-    { path: '/admin/administration', icon: Settings, label: 'Administration' },
+  const allMenuItems = [
+    { key: 'dashboard',     path: '/admin/dashboard',      icon: LayoutDashboard, label: 'Dashboard' },
+    { key: 'temples',       path: '/admin/temples',        icon: Building2,       label: 'Temples' },
+    { key: 'officers',      path: '/admin/officers',       icon: Users,           label: 'Officers' },
+    { key: 'services',      path: '/admin/services',       icon: List,            label: 'Services' },
+    { key: 'feedback',      path: '/admin/feedback',       icon: MessageSquare,   label: 'Feedback' },
+    { key: 'whatsapp_logs', path: '/admin/whatsapp-logs',  icon: MessageCircle,   label: 'WhatsApp Logs' },
+    { key: 'reports',       path: '/admin/reports',        icon: FileText,        label: 'Reports' },
+    { key: 'administration',path: '/admin/administration', icon: Settings,        label: 'Administration' },
   ];
+
+  const isSuperAdmin = authUser?.role === 'superadmin';
+  const userPerms = Array.isArray(authUser?.permissions) ? authUser.permissions : [];
+  const menuItems = isSuperAdmin
+    ? allMenuItems
+    : allMenuItems.filter((item) => userPerms.length === 0 || userPerms.includes(item.key));
+
+  if (isSuperAdmin) {
+    menuItems.push({ key: 'super_admin', path: '/admin/super-admin', icon: ShieldCheck, label: 'Super Admin' });
+  }
 
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-b from-[#721C24] to-[#4A1016]">

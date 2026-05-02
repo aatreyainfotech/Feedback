@@ -10,6 +10,7 @@ import FeedbackMonitoring from "./pages/FeedbackMonitoring";
 import WhatsAppLogs from "./pages/WhatsAppLogs";
 import Reports from "./pages/Reports";
 import Administration from "./pages/Administration";
+import SuperAdmin from "./pages/SuperAdmin";
 import OfficerLogin from "./pages/OfficerLogin";
 import OfficerDashboard from "./pages/OfficerDashboard";
 import DisplayScreen from "./pages/DisplayScreen";
@@ -45,6 +46,7 @@ function App() {
             <Route path="whatsapp-logs" element={<WhatsAppLogs />} />
             <Route path="reports" element={<Reports />} />
             <Route path="administration" element={<Administration />} />
+            <Route path="super-admin" element={<SuperAdmin />} />
           </Route>
           
           {/* Officer Routes */}

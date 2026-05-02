@@ -846,6 +846,32 @@ class Token(BaseModel):
     token_type: str
     user: dict
 
+# Sidebar permission keys controlled by Super Admin
+ALL_ADMIN_PERMISSIONS = [
+    "dashboard",
+    "temples",
+    "officers",
+    "services",
+    "feedback",
+    "whatsapp_logs",
+    "reports",
+    "administration",
+]
+
+class AdminCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: Optional[str] = "admin"  # 'admin' or 'superadmin'
+    permissions: Optional[List[str]] = None
+
+class AdminUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
 class TempleCreate(BaseModel):
     name: str
     location: str
@@ -959,10 +985,23 @@ async def get_current_admin(authorization: str = Header(None)):
         user_id = payload.get("sub")
         role = payload.get("role")
         
-        if role != "admin":
+        if role not in ("admin", "superadmin"):
             raise HTTPException(status_code=403, detail="Admin access required")
         
         return {"id": user_id, "role": role}
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_current_superadmin(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("role") != "superadmin":
+            raise HTTPException(status_code=403, detail="Super Admin access required")
+        return {"id": payload.get("sub"), "role": "superadmin"}
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -1002,7 +1041,7 @@ async def login_help():
 @app.post("/api/auth/login")
 @app.post("/api/auth/admin/login")
 async def login(user_data: UserLogin):
-    """Admin login"""
+    """Admin / Super Admin login"""
     user = execute_query(
         "SELECT * FROM users WHERE email = ?",
         (user_data.email,),
@@ -1012,8 +1051,20 @@ async def login(user_data: UserLogin):
     if not user or not verify_password(user_data.password, user['password']):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
+    role = user.get('role') or 'admin'
+    raw_perms = user.get('permissions') if isinstance(user, dict) else None
+    if raw_perms:
+        try:
+            permissions = json.loads(raw_perms)
+        except Exception:
+            permissions = []
+    else:
+        permissions = []
+    if role == 'superadmin':
+        permissions = ALL_ADMIN_PERMISSIONS
+
     access_token = create_access_token(
-        data={"sub": str(user['id']), "role": user['role']}
+        data={"sub": str(user['id']), "role": role}
     )
     
     return {
@@ -1023,7 +1074,8 @@ async def login(user_data: UserLogin):
         "user": {
             "id": str(user['id']),
             "email": user['email'],
-            "role": user['role']
+            "role": role,
+            "permissions": permissions,
         }
     }
 
@@ -1058,6 +1110,133 @@ async def officer_login(user_data: UserLogin):
             }
         }
     }
+
+# =====================================================
+# SUPER ADMIN ENDPOINTS (manage admins & sidebar perms)
+# =====================================================
+
+def _serialize_admin(row: dict) -> dict:
+    raw = row.get('permissions') if isinstance(row, dict) else None
+    try:
+        perms = json.loads(raw) if raw else []
+    except Exception:
+        perms = []
+    role = row.get('role') or 'admin'
+    if role == 'superadmin':
+        perms = ALL_ADMIN_PERMISSIONS
+    return {
+        "id": str(row['id']),
+        "username": row.get('username'),
+        "email": row.get('email'),
+        "role": role,
+        "permissions": perms,
+        "created_at": row['created_at'].isoformat() if row.get('created_at') else None,
+    }
+
+
+@app.get("/api/admins")
+async def list_admins(current_superadmin = Depends(get_current_superadmin)):
+    """List all admin / super admin users (Super Admin only)."""
+    rows = execute_query(
+        "SELECT id, username, email, role, permissions, created_at FROM users ORDER BY created_at DESC",
+        fetch_all=True,
+    ) or []
+    return [_serialize_admin(r) for r in rows]
+
+
+@app.post("/api/admins")
+async def create_admin(payload: AdminCreate, current_superadmin = Depends(get_current_superadmin)):
+    """Create a new admin / super admin user (Super Admin only)."""
+    existing = execute_query(
+        "SELECT id FROM users WHERE email = ? OR username = ?",
+        (payload.email, payload.username),
+        fetch_one=True,
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Email or username already exists")
+
+    role = payload.role if payload.role in ("admin", "superadmin") else "admin"
+    perms = payload.permissions if payload.permissions is not None else (
+        ALL_ADMIN_PERMISSIONS if role == "superadmin" else ["dashboard"]
+    )
+    perms = [p for p in perms if p in ALL_ADMIN_PERMISSIONS]
+    if role == "superadmin":
+        perms = ALL_ADMIN_PERMISSIONS
+
+    new_id = str(uuid.uuid4())
+    execute_query(
+        """INSERT INTO users (id, username, email, password, role, permissions)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (new_id, payload.username, payload.email, hash_password(payload.password), role, json.dumps(perms))
+    )
+    return {"id": new_id, "username": payload.username, "email": payload.email, "role": role, "permissions": perms}
+
+
+@app.put("/api/admins/{admin_id}")
+async def update_admin(admin_id: str, payload: AdminUpdate, current_superadmin = Depends(get_current_superadmin)):
+    """Update an admin user (Super Admin only)."""
+    row = execute_query("SELECT id, role FROM users WHERE id = ?", (admin_id,), fetch_one=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Admin not found")
+
+    fields, params = [], []
+    if payload.username is not None:
+        fields.append("username = ?"); params.append(payload.username)
+    if payload.email is not None:
+        fields.append("email = ?"); params.append(payload.email)
+    if payload.password:
+        fields.append("password = ?"); params.append(hash_password(payload.password))
+
+    new_role = payload.role if payload.role in ("admin", "superadmin") else None
+    if new_role:
+        fields.append("role = ?"); params.append(new_role)
+
+    effective_role = new_role or row.get('role') or 'admin'
+    if payload.permissions is not None or effective_role == "superadmin":
+        perms = payload.permissions if payload.permissions is not None else []
+        perms = [p for p in perms if p in ALL_ADMIN_PERMISSIONS]
+        if effective_role == "superadmin":
+            perms = ALL_ADMIN_PERMISSIONS
+        fields.append("permissions = ?"); params.append(json.dumps(perms))
+
+    if not fields:
+        return {"message": "No changes"}
+
+    fields.append("updated_at = GETUTCDATE()")
+    params.append(admin_id)
+    execute_query(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", tuple(params))
+    return {"message": "Admin updated"}
+
+
+@app.put("/api/admins/{admin_id}/permissions")
+async def update_admin_permissions(admin_id: str, payload: AdminUpdate, current_superadmin = Depends(get_current_superadmin)):
+    """Convenience endpoint to update only sidebar permissions."""
+    row = execute_query("SELECT id, role FROM users WHERE id = ?", (admin_id,), fetch_one=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Admin not found")
+
+    perms = payload.permissions or []
+    perms = [p for p in perms if p in ALL_ADMIN_PERMISSIONS]
+    if (row.get('role') or 'admin') == "superadmin":
+        perms = ALL_ADMIN_PERMISSIONS
+    execute_query(
+        "UPDATE users SET permissions = ?, updated_at = GETUTCDATE() WHERE id = ?",
+        (json.dumps(perms), admin_id)
+    )
+    return {"message": "Permissions updated", "permissions": perms}
+
+
+@app.delete("/api/admins/{admin_id}")
+async def delete_admin(admin_id: str, current_superadmin = Depends(get_current_superadmin)):
+    """Delete an admin user (Super Admin only)."""
+    if str(current_superadmin.get('id')) == str(admin_id):
+        raise HTTPException(status_code=400, detail="Cannot delete the currently signed-in Super Admin")
+    row = execute_query("SELECT id FROM users WHERE id = ?", (admin_id,), fetch_one=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    execute_query("DELETE FROM users WHERE id = ?", (admin_id,))
+    return {"message": "Admin deleted"}
+
 
 # =====================================================
 # TEMPLE ENDPOINTS
@@ -2131,6 +2310,41 @@ async def startup():
             END
             """
         )
+
+        execute_query(
+            """
+            IF COL_LENGTH('users', 'permissions') IS NULL
+            BEGIN
+                ALTER TABLE users ADD permissions NVARCHAR(MAX) NULL;
+            END
+            """
+        )
+
+        # Backfill: any existing admin without explicit permissions gets full access
+        execute_query(
+            """
+            UPDATE users
+            SET permissions = ?
+            WHERE permissions IS NULL OR LTRIM(RTRIM(permissions)) = ''
+            """,
+            (json.dumps(ALL_ADMIN_PERMISSIONS),),
+        )
+
+        # Bootstrap: if no superadmin exists yet, promote the oldest admin to Super Admin
+        existing_super = execute_query(
+            "SELECT TOP 1 id FROM users WHERE role = 'superadmin'", fetch_one=True
+        )
+        if not existing_super:
+            execute_query(
+                """
+                UPDATE users
+                SET role = 'superadmin', permissions = ?
+                WHERE id = (
+                    SELECT TOP 1 id FROM users ORDER BY created_at ASC
+                )
+                """,
+                (json.dumps(ALL_ADMIN_PERMISSIONS),),
+            )
 
         execute_query(
             """
