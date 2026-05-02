@@ -1486,7 +1486,22 @@ async def get_feedback(
 
 @app.get("/api/feedback/officer")
 async def get_officer_feedback(current_officer = Depends(get_current_officer)):
-    """Get feedback assigned to current officer"""
+    """Get feedback for current officer.
+
+    Officers assigned to a specific temple (or directly assigned to feedback) see
+    only their relevant items. Officers with no temple (All Temples scope –
+    e.g. Commissioner / Asst Commissioner) see feedback across every temple.
+    """
+    if not current_officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
+    temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
+    role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
+
+    # All-Temples scope (no temple_id) or elevated roles -> see everything
+    if not temple_id or role in ('commissioner', 'asst_commissioner'):
+        return await get_feedback()
+
     officer_id = str(current_officer['id'])
     return await get_feedback(officer_id=officer_id)
 
@@ -1773,25 +1788,45 @@ async def get_upload_backfill_status(job_id: str, current_admin = Depends(get_cu
 @app.get("/api/officer/stats")
 async def get_officer_stats(current_officer = Depends(get_current_officer)):
     """Get officer-specific statistics with a single aggregate query."""
+    if not current_officer:
+        raise HTTPException(status_code=404, detail="Officer not found")
+
     officer_id = str(current_officer['id'])
-    cache_key = f"stats:officer:{officer_id}"
+    temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
+    role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
+    all_scope = (not temple_id) or role in ('commissioner', 'asst_commissioner')
+
+    cache_key = f"stats:officer:{'all' if all_scope else officer_id}"
     cached = get_cached_response(cache_key)
     if cached is not None:
         return cached
 
-    summary = execute_query(
-        """
-        SELECT
-            COUNT(*) AS total_assigned,
-            COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
-            COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
-            COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
-        FROM feedback
-        WHERE officer_id = ?
-        """,
-        (officer_id,),
-        fetch_one=True,
-    ) or {}
+    if all_scope:
+        summary = execute_query(
+            """
+            SELECT
+                COUNT(*) AS total_assigned,
+                COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+                COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
+            FROM feedback
+            """,
+            fetch_one=True,
+        ) or {}
+    else:
+        summary = execute_query(
+            """
+            SELECT
+                COUNT(*) AS total_assigned,
+                COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+                COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
+            FROM feedback
+            WHERE officer_id = ?
+            """,
+            (officer_id,),
+            fetch_one=True,
+        ) or {}
 
     stats = {
         "total_assigned": summary.get('total_assigned', 0),
