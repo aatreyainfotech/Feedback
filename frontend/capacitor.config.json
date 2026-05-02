@@ -3,7 +3,8 @@
   "appName": "Temple Feedback",
   "webDir": "build",
   "server": {
-    "androidScheme": "http",
+    "androidScheme": "https",
+    "hostname": "localhost",
     "allowNavigation": [
       "aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net",
       "aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net",
