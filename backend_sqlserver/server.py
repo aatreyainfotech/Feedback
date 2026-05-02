@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
+from starlette.middleware.gzip import GZipMiddleware
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from jose import JWTError, jwt
@@ -18,7 +19,9 @@ import uuid
 import os
 import json
 import logging
+import time
 import aiofiles
+from threading import Lock
 from urllib.parse import urlparse, unquote
 from dotenv import load_dotenv
 
@@ -31,23 +34,40 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+pyodbc.pooling = True
+
+AZURE_SITE_NAME = os.environ.get('WEBSITE_SITE_NAME')
+IS_AZURE_APP = bool(AZURE_SITE_NAME)
+
 # Database Configuration
 DB_SERVER = os.environ.get('DB_SERVER', 'DESKTOP-JGCUNUE\\SQLEXPRESS')
 DB_NAME = os.environ.get('DB_NAME', 'ts_feedbackdb')
 DB_USER = os.environ.get('DB_USER', 'ts_feedback_user')
 DB_PASSWORD = os.environ.get('DB_PASSWORD', 'TsFeedback@2026!')
+LOCAL_DB_SERVER = os.environ.get('LOCAL_DB_SERVER', '')
+LOCAL_DB_NAME = os.environ.get('LOCAL_DB_NAME', 'ts_feedbackdb')
+LOCAL_DB_USER = os.environ.get('LOCAL_DB_USER', 'ts_feedback_user')
+LOCAL_DB_PASSWORD = os.environ.get('LOCAL_DB_PASSWORD', 'TsFeedback@2026!')
+DB_PORT = os.environ.get('DB_PORT', '1433')
+# Azure SQL serverless tier can take 30-60s to wake from auto-pause; default timeout must accommodate that.
+DB_CONNECTION_TIMEOUT = int(os.environ.get('DB_CONNECTION_TIMEOUT', '60'))
+DB_CONNECTION_RETRIES = max(1, int(os.environ.get('DB_CONNECTION_RETRIES', '4')))
+DB_CONNECTION_RETRY_DELAY = float(os.environ.get('DB_CONNECTION_RETRY_DELAY', '1.5'))
+DB_LOCAL_FALLBACK = os.environ.get('DB_LOCAL_FALLBACK', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+READ_CACHE_TTL_SECONDS = max(1, int(os.environ.get('READ_CACHE_TTL_SECONDS', '15')))
+FEEDBACK_QUERY_LIMIT_MAX = max(50, int(os.environ.get('FEEDBACK_QUERY_LIMIT_MAX', '500')))
 
-# Connection string (Azure SQL compatible)
-CONNECTION_STRING = (
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={DB_SERVER};"
-    f"DATABASE={DB_NAME};"
-    f"UID={DB_USER};"
-    f"PWD={DB_PASSWORD};"
-    "Encrypt=yes;"
-    "TrustServerCertificate=no;"
-    "Connection Timeout=30;"
+AVAILABLE_SQL_DRIVERS = [driver for driver in pyodbc.drivers() if 'SQL Server' in driver]
+SQL_DRIVER = os.environ.get('DB_DRIVER') or (
+    'ODBC Driver 18 for SQL Server'
+    if 'ODBC Driver 18 for SQL Server' in AVAILABLE_SQL_DRIVERS
+    else 'ODBC Driver 17 for SQL Server'
 )
+
+RESPONSE_CACHE: dict[str, tuple[float, object]] = {}
+CACHE_LOCK = Lock()
+ACTIVE_DB_CONNECTION_STRING: Optional[str] = None
+ACTIVE_DB_TARGET: Optional[str] = None
 
 # JWT Configuration
 SECRET_KEY = os.environ.get('JWT_SECRET', 'temple_feedback_secret_key_2026')
@@ -61,7 +81,7 @@ BCRYPT_ROUNDS = 12
 # File upload configuration
 # On Azure App Service, WEBSITE_SITE_NAME is set; use /home/uploads so files
 # persist across deployments (Azure Files mount). Fall back to 'uploads' locally.
-_azure_site = os.environ.get('WEBSITE_SITE_NAME')
+_azure_site = AZURE_SITE_NAME
 _default_upload_dir = '/home/uploads' if _azure_site else 'uploads'
 UPLOAD_DIR = os.environ.get('UPLOAD_DIR', _default_upload_dir)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -341,6 +361,47 @@ def get_feedback_video_path(feedback_record: dict) -> Optional[str]:
     return None
 
 
+def normalize_optional_upload_reference(file_path: Optional[str]) -> Optional[str]:
+    """Normalize stored upload references without forcing expensive existence checks."""
+    if not file_path:
+        return None
+
+    try:
+        return normalize_upload_path(str(file_path))
+    except HTTPException:
+        return str(file_path).replace('\\', '/').strip()
+
+
+def serialize_feedback_item(feedback_item: dict) -> dict:
+    """Convert a feedback row into the API response shape quickly."""
+    video_ref = normalize_optional_upload_reference(
+        feedback_item.get('video_url') or feedback_item.get('video_path')
+    )
+
+    return {
+        "id": str(feedback_item['id']),
+        "complaint_id": feedback_item['complaint_id'],
+        "temple_id": str(feedback_item['temple_id']) if feedback_item['temple_id'] else None,
+        "temple_name": feedback_item['temple_name'],
+        "user_name": feedback_item['user_name'],
+        "user_mobile": feedback_item['user_mobile'],
+        "service": feedback_item['service'],
+        "rating": feedback_item['rating'],
+        "message": feedback_item['message'],
+        "video_url": video_ref,
+        "video_path": video_ref,
+        "status": feedback_item['status'],
+        "officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
+        "officer_name": feedback_item['officer_name'],
+        "assigned_officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
+        "assigned_officer_name": feedback_item['officer_name'],
+        "resolution_notes": feedback_item['resolution_notes'],
+        "officer_notes": feedback_item.get('officer_notes') or feedback_item.get('resolution_notes'),
+        "created_at": feedback_item['created_at'].isoformat() if feedback_item['created_at'] else None,
+        "resolved_at": feedback_item['resolved_at'].isoformat() if feedback_item['resolved_at'] else None,
+    }
+
+
 def build_blob_response(file_path: str, file_content: bytes, request: Request):
     """Serve SQL-stored content with optional byte range support for videos."""
     media_type = get_media_type(file_path)
@@ -372,6 +433,7 @@ def build_blob_response(file_path: str, file_content: bytes, request: Request):
 
 # Initialize FastAPI
 app = FastAPI(title="Temple Feedback System API", version="2.0.0")
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 # CORS Configuration
 _default_cors = (
@@ -416,45 +478,321 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # DATABASE HELPER FUNCTIONS
 # =====================================================
 
+def is_azure_sql_server(server_name: str) -> bool:
+    return '.database.windows.net' in (server_name or '').lower()
+
+
+def build_connection_string(server_name: str) -> str:
+    """Build a SQL Server connection string for Azure SQL or local SQL Express."""
+    azure_target = is_azure_sql_server(server_name)
+    normalized_server = (server_name or '').strip()
+
+    if azure_target:
+        normalized_server = normalized_server.removeprefix('tcp:')
+        if ',' not in normalized_server:
+            normalized_server = f"tcp:{normalized_server},{DB_PORT}"
+        else:
+            normalized_server = f"tcp:{normalized_server}"
+
+    encrypt_value = os.environ.get('DB_ENCRYPT', 'yes' if azure_target else 'no')
+    trust_cert_value = os.environ.get('DB_TRUST_SERVER_CERTIFICATE', 'no' if azure_target else 'yes')
+
+    database_name = DB_NAME if azure_target else LOCAL_DB_NAME
+    db_user = DB_USER if azure_target else LOCAL_DB_USER
+    db_password = DB_PASSWORD if azure_target else LOCAL_DB_PASSWORD
+
+    parts = [
+        f"DRIVER={{{SQL_DRIVER}}}",
+        f"SERVER={normalized_server}",
+        f"DATABASE={database_name}",
+    ]
+
+    if db_user and db_password:
+        parts.extend([
+            f"UID={db_user}",
+            f"PWD={db_password}",
+        ])
+    else:
+        parts.append('Trusted_Connection=yes')
+
+    parts.extend([
+        f"Encrypt={encrypt_value}",
+        f"TrustServerCertificate={trust_cert_value}",
+        'MARS_Connection=yes',
+    ])
+
+    return ';'.join(parts) + ';'
+
+
+def get_db_server_candidates() -> list[str]:
+    """Return preferred DB targets, falling back to local SQL Express for local development."""
+    candidates = [DB_SERVER]
+
+    if not IS_AZURE_APP and DB_LOCAL_FALLBACK:
+        local_machine = os.environ.get('COMPUTERNAME', 'localhost')
+        candidates.extend([
+            LOCAL_DB_SERVER,
+            f'{local_machine}\\SQLEXPRESS',
+            'localhost\\SQLEXPRESS',
+            '.\\SQLEXPRESS',
+        ])
+
+    unique_candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = (candidate or '').strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_candidates.append(normalized)
+
+    return unique_candidates
+
+
+def format_db_connection_error(error: Exception) -> str:
+    """Convert low-level ODBC failures into a clear API message."""
+    message = str(error)
+    lowered = message.lower()
+
+    if '40615' in message or 'not allowed to access the server' in lowered:
+        return (
+            'Azure SQL firewall is blocking this machine. Add your current public IP to the SQL Server firewall '
+            'or let the app use the local SQL Express fallback.'
+        )
+
+    if 'login failed for user' in lowered:
+        return 'Database login failed. Verify DB_USER and DB_PASSWORD.'
+
+    if 'server was not found' in lowered or 'instance-specific error' in lowered:
+        return 'Database server was not found. Verify DB_SERVER and that SQL Server is running.'
+
+    if (
+        '40613' in message
+        or 'is not currently available' in lowered
+        or 'database is not currently available' in lowered
+        or 'login timeout expired' in lowered
+        or 'unable to complete login process' in lowered
+    ):
+        return 'Database is waking up, please try again in a moment.'
+
+    return f'Database connection failed: {message}'
+
+
+def _is_transient_db_error(exc: Exception) -> bool:
+    """Detect Azure SQL cold-start / transient errors that justify a retry."""
+    message = str(exc).lower()
+    transient_markers = (
+        '40613',           # database currently unavailable (paused / resuming)
+        '40197', '40501', '49918', '49919', '49920',
+        '10928', '10929',  # resource limits
+        '10053', '10054', '10060',  # network drops
+        '08001', '08s01', 'hyt00', 'hyt01',  # ODBC connect/timeout states
+        'login timeout expired',
+        'tcp provider',
+        'communication link failure',
+        'is not currently available',
+        'database is not currently available',
+        'unable to complete login process',
+    )
+    return any(marker in message for marker in transient_markers)
+
+
 def get_db_connection():
-    """Get database connection"""
-    try:
-        conn = pyodbc.connect(CONNECTION_STRING)
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        raise HTTPException(status_code=500, detail="Database connection failed")
+    """Get a pooled database connection with local SQL Express fallback for development.
+
+    Retries transient Azure SQL cold-start errors so the first request after
+    auto-pause does not surface as 'Database connection failed' to the user.
+    """
+    global ACTIVE_DB_CONNECTION_STRING, ACTIVE_DB_TARGET
+
+    candidates: list[tuple[str, str]] = []
+    if ACTIVE_DB_CONNECTION_STRING and ACTIVE_DB_TARGET:
+        candidates.append((ACTIVE_DB_TARGET, ACTIVE_DB_CONNECTION_STRING))
+    else:
+        candidates.extend((server_name, build_connection_string(server_name)) for server_name in get_db_server_candidates())
+
+    last_error: Optional[Exception] = None
+
+    for server_name, connection_string in candidates:
+        for attempt in range(1, DB_CONNECTION_RETRIES + 1):
+            try:
+                conn = pyodbc.connect(connection_string, timeout=DB_CONNECTION_TIMEOUT)
+                if ACTIVE_DB_TARGET != server_name:
+                    logger.info('Using database server: %s (%s)', server_name, SQL_DRIVER)
+                ACTIVE_DB_CONNECTION_STRING = connection_string
+                ACTIVE_DB_TARGET = server_name
+                return conn
+            except Exception as exc:
+                last_error = exc
+                transient = _is_transient_db_error(exc)
+                logger.warning(
+                    'Database connection attempt %s/%s failed for %s (transient=%s): %s',
+                    attempt, DB_CONNECTION_RETRIES, server_name, transient, exc,
+                )
+                if ACTIVE_DB_TARGET == server_name:
+                    ACTIVE_DB_CONNECTION_STRING = None
+                    ACTIVE_DB_TARGET = None
+                if not transient or attempt >= DB_CONNECTION_RETRIES:
+                    break
+                # Exponential backoff to give Azure SQL serverless time to resume.
+                time.sleep(DB_CONNECTION_RETRY_DELAY * attempt)
+
+    logger.error('Database connection error: %s', last_error)
+    raise HTTPException(status_code=503, detail=format_db_connection_error(last_error or Exception('Unknown database error')))
+
+
+def get_cached_response(cache_key: Optional[str]):
+    """Return a short-lived cached payload when available."""
+    if not cache_key:
+        return None
+
+    now = time.time()
+    with CACHE_LOCK:
+        entry = RESPONSE_CACHE.get(cache_key)
+        if not entry:
+            return None
+
+        expires_at, payload = entry
+        if expires_at <= now:
+            RESPONSE_CACHE.pop(cache_key, None)
+            return None
+
+        return payload
+
+
+def set_cached_response(cache_key: Optional[str], payload, ttl: int = READ_CACHE_TTL_SECONDS):
+    """Store a payload in the in-memory response cache."""
+    if not cache_key:
+        return
+
+    with CACHE_LOCK:
+        RESPONSE_CACHE[cache_key] = (time.time() + max(1, ttl), payload)
+
+
+def clear_cached_responses():
+    """Invalidate cached GET responses after writes."""
+    with CACHE_LOCK:
+        RESPONSE_CACHE.clear()
+
 
 def execute_query(query: str, params: tuple = None, fetch_one: bool = False, fetch_all: bool = False):
-    """Execute a SQL query"""
+    """Execute a SQL query with pooled connections and automatic cache invalidation."""
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.arraysize = 250
+
     try:
-        if params:
+        if params is not None:
             cursor.execute(query, params)
         else:
             cursor.execute(query)
-        
+
         if fetch_one:
             row = cursor.fetchone()
             if row:
                 columns = [column[0] for column in cursor.description]
                 return dict(zip(columns, row))
             return None
-        elif fetch_all:
+
+        if fetch_all:
             rows = cursor.fetchall()
             columns = [column[0] for column in cursor.description]
             return [dict(zip(columns, row)) for row in rows]
-        else:
-            conn.commit()
-            return True
+
+        conn.commit()
+        clear_cached_responses()
+        return True
     except Exception as e:
         logger.error(f"Query error: {e}")
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         conn.close()
+
+
+def ensure_database_indexes():
+    """Create the main read-performance indexes used by the busiest API endpoints."""
+    index_statements = [
+        """
+        IF OBJECT_ID('feedback', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_feedback_created_at' AND object_id = OBJECT_ID('feedback'))
+        BEGIN
+            CREATE INDEX IX_feedback_created_at ON feedback (created_at DESC);
+        END
+        """,
+        """
+        IF OBJECT_ID('feedback', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_feedback_status_created_at' AND object_id = OBJECT_ID('feedback'))
+        BEGIN
+            CREATE INDEX IX_feedback_status_created_at ON feedback (status, created_at DESC);
+        END
+        """,
+        """
+        IF OBJECT_ID('feedback', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_feedback_officer_status_created_at' AND object_id = OBJECT_ID('feedback'))
+        BEGIN
+            CREATE INDEX IX_feedback_officer_status_created_at ON feedback (officer_id, status, created_at DESC);
+        END
+        """,
+        """
+        IF OBJECT_ID('feedback', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_feedback_temple_created_at' AND object_id = OBJECT_ID('feedback'))
+        BEGIN
+            CREATE INDEX IX_feedback_temple_created_at ON feedback (temple_id, created_at DESC);
+        END
+        """,
+        """
+        IF OBJECT_ID('users', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_users_email' AND object_id = OBJECT_ID('users'))
+        BEGIN
+            CREATE INDEX IX_users_email ON users (email);
+        END
+        """,
+        """
+        IF OBJECT_ID('officers', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_officers_email' AND object_id = OBJECT_ID('officers'))
+        BEGIN
+            CREATE INDEX IX_officers_email ON officers (email);
+        END
+        """,
+        """
+        IF OBJECT_ID('temples', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_temples_email' AND object_id = OBJECT_ID('temples'))
+        BEGIN
+            CREATE INDEX IX_temples_email ON temples (email);
+        END
+        """,
+        """
+        IF OBJECT_ID('services', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_services_active_display_order' AND object_id = OBJECT_ID('services'))
+        BEGIN
+            CREATE INDEX IX_services_active_display_order ON services (is_active, display_order);
+        END
+        """,
+        """
+        IF OBJECT_ID('whatsapp_logs', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_whatsapp_logs_created_at' AND object_id = OBJECT_ID('whatsapp_logs'))
+        BEGIN
+            CREATE INDEX IX_whatsapp_logs_created_at ON whatsapp_logs (created_at DESC);
+        END
+        """,
+        """
+        IF OBJECT_ID('file_uploads', 'U') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_file_uploads_path_created_at' AND object_id = OBJECT_ID('file_uploads'))
+        BEGIN
+            CREATE INDEX IX_file_uploads_path_created_at ON file_uploads (file_path, created_at DESC);
+        END
+        """,
+    ]
+
+    for statement in index_statements:
+        try:
+            execute_query(statement)
+        except HTTPException as exc:
+            logger.warning("Skipped optional index creation: %s", exc.detail)
 
 
 def trim_backfill_logs(messages: list[str], limit: int = 200) -> list[str]:
@@ -602,10 +940,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 def generate_complaint_id():
-    """Generate unique complaint ID"""
-    count = execute_query("SELECT COUNT(*) as count FROM feedback", fetch_one=True)
-    num = (count['count'] if count else 0) + 1
-    return f"TF{str(num).zfill(5)}"
+    """Generate a unique complaint ID without scanning the feedback table."""
+    timestamp = datetime.utcnow().strftime("%y%m%d%H%M%S")
+    suffix = uuid.uuid4().hex[:4].upper()
+    return f"TF{timestamp}{suffix}"
 
 # =====================================================
 # AUTHENTICATION DEPENDENCIES
@@ -641,7 +979,11 @@ async def get_current_officer(authorization: str = Header(None)):
         if role != "officer":
             raise HTTPException(status_code=403, detail="Officer access required")
         
-        officer = execute_query("SELECT * FROM officers WHERE id = ?", (user_id,), fetch_one=True)
+        officer = execute_query(
+            "SELECT id, name, email, temple_id, temple_name, role, permissions FROM officers WHERE id = ?",
+            (user_id,),
+            fetch_one=True,
+        )
         return officer
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -723,9 +1065,17 @@ async def officer_login(user_data: UserLogin):
 
 @app.get("/api/temples")
 async def get_temples():
-    """Get all temples"""
-    temples = execute_query("SELECT * FROM temples ORDER BY created_at DESC", fetch_all=True)
-    return [
+    """Get all temples."""
+    cache_key = "temples:list"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    temples = execute_query(
+        "SELECT id, name, location, email, logo_path, officer_id, created_at FROM temples ORDER BY created_at DESC",
+        fetch_all=True,
+    )
+    response = [
         {
             "id": str(t['id']),
             "name": t['name'],
@@ -737,6 +1087,8 @@ async def get_temples():
         }
         for t in temples
     ]
+    set_cached_response(cache_key, response)
+    return response
 
 @app.post("/api/temples")
 async def create_temple(temple: TempleCreate, current_admin = Depends(get_current_admin)):
@@ -875,9 +1227,17 @@ async def register_tablet(data: RegisterTablet):
 
 @app.get("/api/officers")
 async def get_officers():
-    """Get all officers"""
-    officers = execute_query("SELECT * FROM officers ORDER BY created_at DESC", fetch_all=True)
-    return [
+    """Get all officers."""
+    cache_key = "officers:list"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    officers = execute_query(
+        "SELECT id, name, email, temple_id, temple_name, role, permissions, created_at FROM officers ORDER BY created_at DESC",
+        fetch_all=True,
+    )
+    response = [
         {
             "id": str(o['id']),
             "name": o['name'],
@@ -890,6 +1250,8 @@ async def get_officers():
         }
         for o in officers
     ]
+    set_cached_response(cache_key, response)
+    return response
 
 @app.post("/api/officers")
 async def create_officer(officer: OfficerCreate, current_admin = Depends(get_current_admin)):
@@ -1020,9 +1382,17 @@ async def delete_officer(officer_id: str, current_admin = Depends(get_current_ad
 
 @app.get("/api/services")
 async def get_services():
-    """Get all services"""
-    services = execute_query("SELECT * FROM services WHERE is_active = 1 ORDER BY display_order", fetch_all=True)
-    return [
+    """Get all services."""
+    cache_key = "services:list"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    services = execute_query(
+        "SELECT id, name, display_order, created_at FROM services WHERE is_active = 1 ORDER BY display_order",
+        fetch_all=True,
+    )
+    response = [
         {
             "id": str(s['id']),
             "name": s['name'],
@@ -1031,6 +1401,8 @@ async def get_services():
         }
         for s in services
     ]
+    set_cached_response(cache_key, response)
+    return response
 
 @app.post("/api/services")
 async def create_service(name: str = Query(...), current_admin = Depends(get_current_admin)):
@@ -1066,10 +1438,24 @@ async def delete_service(service_id: str, current_admin = Depends(get_current_ad
 async def get_feedback(
     temple_id: Optional[str] = None,
     status: Optional[str] = None,
-    officer_id: Optional[str] = None
+    officer_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=FEEDBACK_QUERY_LIMIT_MAX),
+    offset: int = Query(0, ge=0),
 ):
-    """Get all feedback with filters"""
-    query = "SELECT * FROM feedback WHERE 1=1"
+    """Get feedback quickly with optional filters and pagination."""
+    cache_key = f"feedback:list:{temple_id or 'all'}:{status or 'all'}:{officer_id or 'all'}:{limit or 'all'}:{offset}"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    query = """
+        SELECT id, complaint_id, temple_id, temple_name, user_name, user_mobile,
+               service, rating, message, COALESCE(video_url, video_path) AS video_url,
+               video_path, status, officer_id, officer_name, resolution_notes,
+               officer_notes, created_at, resolved_at
+        FROM feedback
+        WHERE 1=1
+    """
     params = []
     
     if temple_id:
@@ -1083,37 +1469,12 @@ async def get_feedback(
         params.append(officer_id)
     
     query += " ORDER BY created_at DESC"
+    if limit is not None:
+        query += f" OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
     
     feedback_list = execute_query(query, tuple(params) if params else None, fetch_all=True)
-
-    response_items = []
-    for feedback_item in feedback_list:
-        video_path = get_feedback_video_path(feedback_item)
-        response_items.append(
-            {
-                "id": str(feedback_item['id']),
-                "complaint_id": feedback_item['complaint_id'],
-                "temple_id": str(feedback_item['temple_id']) if feedback_item['temple_id'] else None,
-                "temple_name": feedback_item['temple_name'],
-                "user_name": feedback_item['user_name'],
-                "user_mobile": feedback_item['user_mobile'],
-                "service": feedback_item['service'],
-                "rating": feedback_item['rating'],
-                "message": feedback_item['message'],
-                "video_url": video_path,
-                "video_path": video_path,
-                "status": feedback_item['status'],
-                "officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
-                "officer_name": feedback_item['officer_name'],
-                "assigned_officer_id": str(feedback_item['officer_id']) if feedback_item['officer_id'] else None,
-                "assigned_officer_name": feedback_item['officer_name'],
-                "resolution_notes": feedback_item['resolution_notes'],
-                "officer_notes": feedback_item.get('officer_notes') or feedback_item.get('resolution_notes'),
-                "created_at": feedback_item['created_at'].isoformat() if feedback_item['created_at'] else None,
-                "resolved_at": feedback_item['resolved_at'].isoformat() if feedback_item['resolved_at'] else None,
-            }
-        )
-
+    response_items = [serialize_feedback_item(feedback_item) for feedback_item in feedback_list]
+    set_cached_response(cache_key, response_items, ttl=5)
     return response_items
 
 
@@ -1122,6 +1483,33 @@ async def get_officer_feedback(current_officer = Depends(get_current_officer)):
     """Get feedback assigned to current officer"""
     officer_id = str(current_officer['id'])
     return await get_feedback(officer_id=officer_id)
+
+
+@app.get("/api/display/live-feed")
+async def get_display_live_feed(limit: int = Query(12, ge=1, le=50)):
+    """Public live feed for the display screen with the latest feedback entries."""
+    safe_limit = max(1, min(limit, 50))
+    cache_key = f"display:live-feed:{safe_limit}"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    rows = execute_query(
+        f"""
+        SELECT TOP {safe_limit}
+            id, complaint_id, temple_id, temple_name, user_name, user_mobile,
+            service, rating, message, COALESCE(video_url, video_path) AS video_url,
+            video_path, status, officer_id, officer_name, resolution_notes,
+            officer_notes, created_at, resolved_at
+        FROM feedback
+        ORDER BY created_at DESC
+        """,
+        fetch_all=True,
+    )
+
+    payload = [serialize_feedback_item(row) for row in rows]
+    set_cached_response(cache_key, payload, ttl=5)
+    return payload
 
 @app.post("/api/feedback")
 async def create_feedback(feedback: FeedbackCreate):
@@ -1273,18 +1661,37 @@ async def assign_officer(feedback_id: str, assign: FeedbackAssign, current_admin
 
 @app.get("/api/stats")
 async def get_stats(current_admin = Depends(get_current_admin)):
-    """Get dashboard statistics"""
+    """Get dashboard statistics with minimal database round-trips."""
+    cache_key = "stats:admin"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    summary = execute_query(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM temples) AS total_temples,
+            (SELECT COUNT(*) FROM officers) AS total_officers,
+            COUNT(*) AS total_feedback,
+            COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+            COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved,
+            COALESCE(SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END), 0) AS rejected
+        FROM feedback
+        """,
+        fetch_one=True,
+    ) or {}
+
     stats = {
-        "total_temples": execute_query("SELECT COUNT(*) as count FROM temples", fetch_one=True)['count'],
-        "total_officers": execute_query("SELECT COUNT(*) as count FROM officers", fetch_one=True)['count'],
-        "total_feedback": execute_query("SELECT COUNT(*) as count FROM feedback", fetch_one=True)['count'],
-        "pending": execute_query("SELECT COUNT(*) as count FROM feedback WHERE status = 'Pending'", fetch_one=True)['count'],
-        "in_progress": execute_query("SELECT COUNT(*) as count FROM feedback WHERE status = 'In Progress'", fetch_one=True)['count'],
-        "resolved": execute_query("SELECT COUNT(*) as count FROM feedback WHERE status = 'Resolved'", fetch_one=True)['count'],
-        "rejected": execute_query("SELECT COUNT(*) as count FROM feedback WHERE status = 'Rejected'", fetch_one=True)['count'],
+        "total_temples": summary.get('total_temples', 0),
+        "total_officers": summary.get('total_officers', 0),
+        "total_feedback": summary.get('total_feedback', 0),
+        "pending": summary.get('pending', 0),
+        "in_progress": summary.get('in_progress', 0),
+        "resolved": summary.get('resolved', 0),
+        "rejected": summary.get('rejected', 0),
     }
     
-    # Temple-wise feedback
     temple_stats = execute_query(
         """SELECT t.name as temple, COUNT(f.id) as feedback
            FROM temples t
@@ -1295,7 +1702,7 @@ async def get_stats(current_admin = Depends(get_current_admin)):
     )
     
     stats["temple_stats"] = [{"_id": t["temple"], "count": t["feedback"]} for t in temple_stats]
-    
+    set_cached_response(cache_key, stats, ttl=10)
     return stats
 
 
@@ -1359,28 +1766,34 @@ async def get_upload_backfill_status(job_id: str, current_admin = Depends(get_cu
 
 @app.get("/api/officer/stats")
 async def get_officer_stats(current_officer = Depends(get_current_officer)):
-    """Get officer-specific statistics"""
+    """Get officer-specific statistics with a single aggregate query."""
     officer_id = str(current_officer['id'])
-    
+    cache_key = f"stats:officer:{officer_id}"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    summary = execute_query(
+        """
+        SELECT
+            COUNT(*) AS total_assigned,
+            COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+            COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
+        FROM feedback
+        WHERE officer_id = ?
+        """,
+        (officer_id,),
+        fetch_one=True,
+    ) or {}
+
     stats = {
-        "total_assigned": execute_query(
-            "SELECT COUNT(*) as count FROM feedback WHERE officer_id = ?",
-            (officer_id,), fetch_one=True
-        )['count'],
-        "pending": execute_query(
-            "SELECT COUNT(*) as count FROM feedback WHERE officer_id = ? AND status = 'Pending'",
-            (officer_id,), fetch_one=True
-        )['count'],
-        "in_progress": execute_query(
-            "SELECT COUNT(*) as count FROM feedback WHERE officer_id = ? AND status = 'In Progress'",
-            (officer_id,), fetch_one=True
-        )['count'],
-        "resolved": execute_query(
-            "SELECT COUNT(*) as count FROM feedback WHERE officer_id = ? AND status = 'Resolved'",
-            (officer_id,), fetch_one=True
-        )['count'],
+        "total_assigned": summary.get('total_assigned', 0),
+        "pending": summary.get('pending', 0),
+        "in_progress": summary.get('in_progress', 0),
+        "resolved": summary.get('resolved', 0),
     }
-    
+    set_cached_response(cache_key, stats, ttl=10)
     return stats
 
 
@@ -1395,9 +1808,17 @@ async def get_dashboard_officer_stats(current_officer = Depends(get_current_offi
 
 @app.get("/api/whatsapp-logs")
 async def get_whatsapp_logs(current_admin = Depends(get_current_admin)):
-    """Get all WhatsApp logs"""
-    logs = execute_query("SELECT * FROM whatsapp_logs ORDER BY created_at DESC", fetch_all=True)
-    return [
+    """Get all WhatsApp logs."""
+    cache_key = "whatsapp-logs:list"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+
+    logs = execute_query(
+        "SELECT id, feedback_id, phone_number, message, status, message_type, created_at FROM whatsapp_logs ORDER BY created_at DESC",
+        fetch_all=True,
+    )
+    response = [
         {
             "id": str(log['id']),
             "feedback_id": str(log['feedback_id']) if log['feedback_id'] else None,
@@ -1409,6 +1830,8 @@ async def get_whatsapp_logs(current_admin = Depends(get_current_admin)):
         }
         for log in logs
     ]
+    set_cached_response(cache_key, response, ttl=10)
+    return response
 
 
 @app.get("/api/whatsapp/logs")
@@ -1592,7 +2015,7 @@ async def startup():
     logger.info(f"Server: {DB_SERVER}")
     logger.info("=" * 50)
     
-    # Test database connection
+    # Test database connection (warm up Azure SQL serverless if it is paused)
     try:
         conn = get_db_connection()
         conn.close()
@@ -1620,15 +2043,23 @@ async def startup():
 
         execute_query(
             """
-            IF COL_LENGTH('feedback', 'video_path') IS NOT NULL
+            IF COL_LENGTH('feedback', 'video_path') IS NULL
             BEGIN
-                UPDATE feedback
-                SET video_path = video_url
-                WHERE video_url IS NOT NULL
-                  AND (video_path IS NULL OR video_path <> video_url);
+                ALTER TABLE feedback ADD video_path NVARCHAR(MAX) NULL;
             END
             """
         )
+
+        execute_query(
+            """
+            UPDATE feedback
+            SET video_path = video_url
+            WHERE video_url IS NOT NULL
+              AND (video_path IS NULL OR video_path <> video_url);
+            """
+        )
+
+        ensure_database_indexes()
 
         default_services = [
             'Annadhanam', 'Darshan', 'Prasadam', 'Pooja', 'Donation', 'Seva', 'Other', 'General'

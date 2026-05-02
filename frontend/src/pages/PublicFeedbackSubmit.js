@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { API } from '../utils/api';
+import api, { API } from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -63,17 +62,35 @@ const PublicFeedbackSubmit = () => {
     await videoEl.play().catch(() => {});
   };
 
+  const stopFaceDetection = useCallback(() => {
+    if (faceDetectionRafRef.current) {
+      cancelAnimationFrame(faceDetectionRafRef.current);
+      faceDetectionRafRef.current = null;
+    }
+    faceDetectionBusyRef.current = false;
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    stopFaceDetection();
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, [stopFaceDetection]);
+
   useEffect(() => {
-    // Check if tablet is registered to a temple
     const registered = localStorage.getItem('registered_temple');
     if (registered) {
       const templeData = JSON.parse(registered);
       setRegisteredTemple(templeData);
       setFormData(prev => ({ ...prev, temple_id: templeData.id }));
     } else {
-      // If not registered, redirect to setup page
       navigate('/setup-temple');
-      return;
+      return undefined;
     }
     
     fetchTemples();
@@ -84,15 +101,7 @@ const PublicFeedbackSubmit = () => {
         videoStreamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [navigate]);
-
-  const stopFaceDetection = () => {
-    if (faceDetectionRafRef.current) {
-      cancelAnimationFrame(faceDetectionRafRef.current);
-      faceDetectionRafRef.current = null;
-    }
-    faceDetectionBusyRef.current = false;
-  };
+  }, [navigate, stopRecording]);
 
   const startFaceDetection = async () => {
     if (!videoPreviewRef.current) return;
@@ -163,7 +172,7 @@ const PublicFeedbackSubmit = () => {
 
   const fetchServices = async () => {
     try {
-      const response = await axios.get(`${API}/services`);
+      const response = await api.get('/services');
       setServices(response.data);
     } catch (error) {
       console.error('Failed to fetch services:', error);
@@ -182,7 +191,7 @@ const PublicFeedbackSubmit = () => {
 
   const fetchTemples = async () => {
     try {
-      const response = await axios.get(`${API}/temples`);
+      const response = await api.get('/temples');
       setTemples(response.data);
     } catch (error) {
       toast.error('Failed to fetch temples');
@@ -296,17 +305,6 @@ if (blob.size === 0) {
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
-    stopFaceDetection();
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-  };
-
   const clearVideo = () => {
     setVideoBlob(null);
     setVideoPreview(null);
@@ -359,12 +357,11 @@ if (blob.size === 0) {
       const videoFormData = new FormData();
       videoFormData.append('file', videoBlob, 'feedback-video.webm');
       
-      const uploadResponse = await axios.post(`${API}/upload/video`, videoFormData, {
+      const uploadResponse = await api.post('/upload/video', videoFormData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      // Submit feedback with video path
-      const feedbackResponse = await axios.post(`${API}/feedback`, {
+      const feedbackResponse = await api.post('/feedback', {
         ...formData,
         video_url: uploadResponse.data.path,
       });

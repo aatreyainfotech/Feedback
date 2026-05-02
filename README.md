@@ -60,7 +60,7 @@ A comprehensive feedback management system for temples with Admin Dashboard, Off
 |-----------|------------|
 | Frontend | React 19, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI (Python 3.11+) |
-| Database | MongoDB |
+| Database | SQLDB |
 | Charts | Recharts |
 | Video | MediaRecorder API |
 | Mobile | Capacitor (for APK build) |

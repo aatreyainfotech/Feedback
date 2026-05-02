@@ -27,24 +27,49 @@ const OfficerDashboard = () => {
   }, [selectedFeedback]);
 
   useEffect(() => {
-    fetchFeedback();
-    fetchStats();
+    let active = true;
+
+    const loadDashboardData = async () => {
+      setLoading(true);
+      try {
+        const [feedbackResponse, statsResponse] = await Promise.all([
+          api.get('/feedback/officer', { cacheTtlMs: 5000 }),
+          api.get('/dashboard/officer-stats', { cacheTtlMs: 5000 }),
+        ]);
+
+        if (!active) {
+          return;
+        }
+
+        setFeedback(feedbackResponse.data);
+        setStats(statsResponse.data);
+      } catch (error) {
+        toast.error('Failed to load dashboard data');
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadDashboardData();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const fetchFeedback = async () => {
     try {
-      const response = await api.get('/feedback/officer');
+      const response = await api.get('/feedback/officer', { forceRefresh: true });
       setFeedback(response.data);
     } catch (error) {
       toast.error('Failed to fetch feedback');
-    } finally {
-      setLoading(false);
     }
   };
 
   const fetchStats = async () => {
     try {
-      const response = await api.get('/dashboard/officer-stats');
+      const response = await api.get('/dashboard/officer-stats', { forceRefresh: true });
       setStats(response.data);
     } catch (error) {
       console.error('Failed to fetch stats');
@@ -66,8 +91,7 @@ const OfficerDashboard = () => {
       setSelectedFeedback(null);
       setStatusUpdate('');
       setOfficerNotes('');
-      fetchFeedback();
-      fetchStats();
+      await Promise.all([fetchFeedback(), fetchStats()]);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to update status');
     }
@@ -114,7 +138,7 @@ const OfficerDashboard = () => {
   const statCards = [
     {
       title: 'Total Feedback',
-      value: stats?.total_feedback || 0,
+      value: stats?.total_assigned || stats?.total_feedback || 0,
       icon: MessageSquare,
       color: 'border-t-[#721C24]',
     },

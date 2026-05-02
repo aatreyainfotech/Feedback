@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import api from '../utils/api';
 import { API } from '../utils/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -32,48 +32,55 @@ const FeedbackMonitoring = () => {
   const [rowsPerPage] = useState(5);
 
   useEffect(() => {
-    fetchFeedback();
-    fetchTemples();
-    fetchOfficers();
+    let active = true;
+
+    const loadLookups = async () => {
+      try {
+        const [templesResponse, officersResponse] = await Promise.all([
+          api.get('/temples'),
+          api.get('/officers'),
+        ]);
+
+        if (!active) {
+          return;
+        }
+
+        setTemples(templesResponse.data);
+        setOfficers(officersResponse.data);
+      } catch (error) {
+        console.error('Failed to load lookup data', error);
+      }
+    };
+
+    loadLookups();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const fetchOfficers = async () => {
-    try {
-      const response = await api.get('/officers');
-      setOfficers(response.data);
-    } catch (error) {
-      console.error('Failed to fetch officers');
-    }
-  };
-
-  const fetchFeedback = async () => {
+  const fetchFeedback = useCallback(async () => {
+    setLoading(true);
     try {
       const params = {};
       if (filterStatus !== 'all') params.status = filterStatus;
       if (filterTemple !== 'all') params.temple_id = filterTemple;
-      
-      const response = await api.get('/feedback', { params });
+
+      const response = await api.get('/feedback', { params, cacheTtlMs: 5000 });
       setFeedback(response.data);
     } catch (error) {
       toast.error('Failed to fetch feedback');
     } finally {
       setLoading(false);
     }
-  };
-
-  const fetchTemples = async () => {
-    try {
-      const response = await api.get('/temples');
-      setTemples(response.data);
-    } catch (error) {
-      console.error('Failed to fetch temples');
-    }
-  };
+  }, [filterStatus, filterTemple]);
 
   useEffect(() => {
     setCurrentPage(1);
-    fetchFeedback();
   }, [filterStatus, filterTemple]);
+
+  useEffect(() => {
+    fetchFeedback();
+  }, [fetchFeedback]);
 
   const getStatusBadge = (status) => {
     const styles = {
@@ -89,8 +96,11 @@ const FeedbackMonitoring = () => {
     );
   };
 
-  const totalPages = Math.max(1, Math.ceil(feedback.length / rowsPerPage));
-  const pagedFeedback = feedback.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(feedback.length / rowsPerPage)), [feedback.length, rowsPerPage]);
+  const pagedFeedback = useMemo(
+    () => feedback.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage),
+    [feedback, currentPage, rowsPerPage]
+  );
 
   const handlePageChange = (newPage) => {
     if (newPage < 1 || newPage > totalPages) return;

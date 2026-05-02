@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
-import { API } from '../utils/api';
+import api from '../utils/api';
 import { Star } from 'lucide-react';
 import { format } from 'date-fns';
 import Header from '../components/Header';
@@ -9,15 +8,25 @@ const DisplayScreen = () => {
   const [feedback, setFeedback] = useState([]);
 
   useEffect(() => {
-    fetchLiveFeed();
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(fetchLiveFeed, 10000);
-    return () => clearInterval(interval);
+    const loadVisibleFeed = () => {
+      if (document.visibilityState === 'visible') {
+        fetchLiveFeed();
+      }
+    };
+
+    loadVisibleFeed();
+    const interval = setInterval(loadVisibleFeed, 30000);
+    document.addEventListener('visibilitychange', loadVisibleFeed);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', loadVisibleFeed);
+    };
   }, []);
 
   const fetchLiveFeed = async () => {
     try {
-      const response = await axios.get(`${API}/display/live-feed`);
+      const response = await api.get('/display/live-feed', { cacheTtlMs: 5000 });
       setFeedback(response.data);
     } catch (error) {
       console.error('Failed to fetch live feed:', error);

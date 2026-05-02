@@ -26,16 +26,20 @@ DB_SERVER = os.environ.get('DB_SERVER', 'DESKTOP-JGCUNUE\\SQLEXPRESS')
 DB_NAME = os.environ.get('DB_NAME', 'ts_feedbackdb')
 DB_USER = os.environ.get('DB_USER', 'ts_feedback_user')
 DB_PASSWORD = os.environ.get('DB_PASSWORD', 'TsFeedback@2026!')
+LOCAL_DB_SERVER = os.environ.get('LOCAL_DB_SERVER', '')
+LOCAL_DB_NAME = os.environ.get('LOCAL_DB_NAME', 'ts_feedbackdb')
+LOCAL_DB_USER = os.environ.get('LOCAL_DB_USER', 'ts_feedback_user')
+LOCAL_DB_PASSWORD = os.environ.get('LOCAL_DB_PASSWORD', 'TsFeedback@2026!')
+DB_PORT = os.environ.get('DB_PORT', '1433')
+DB_CONNECTION_TIMEOUT = int(os.environ.get('DB_CONNECTION_TIMEOUT', '5'))
+DB_LOCAL_FALLBACK = os.environ.get('DB_LOCAL_FALLBACK', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+IS_AZURE_APP = bool(os.environ.get('WEBSITE_SITE_NAME'))
 
-CONNECTION_STRING = (
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-    f"SERVER={DB_SERVER};"
-    f"DATABASE={DB_NAME};"
-    f"UID={DB_USER};"
-    f"PWD={DB_PASSWORD};"
-    "Encrypt=yes;"
-    "TrustServerCertificate=no;"
-    "Connection Timeout=30;"
+AVAILABLE_SQL_DRIVERS = [driver for driver in pyodbc.drivers() if 'SQL Server' in driver]
+SQL_DRIVER = os.environ.get('DB_DRIVER') or (
+    'ODBC Driver 18 for SQL Server'
+    if 'ODBC Driver 18 for SQL Server' in AVAILABLE_SQL_DRIVERS
+    else 'ODBC Driver 17 for SQL Server'
 )
 
 
@@ -48,8 +52,81 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def is_azure_sql_server(server_name: str) -> bool:
+    return '.database.windows.net' in (server_name or '').lower()
+
+
+def build_connection_string(server_name: str) -> str:
+    azure_target = is_azure_sql_server(server_name)
+    normalized_server = (server_name or '').strip()
+
+    if azure_target:
+        normalized_server = normalized_server.removeprefix('tcp:')
+        if ',' not in normalized_server:
+            normalized_server = f"tcp:{normalized_server},{DB_PORT}"
+        else:
+            normalized_server = f"tcp:{normalized_server}"
+
+    encrypt_value = os.environ.get('DB_ENCRYPT', 'yes' if azure_target else 'no')
+    trust_cert_value = os.environ.get('DB_TRUST_SERVER_CERTIFICATE', 'no' if azure_target else 'yes')
+
+    database_name = DB_NAME if azure_target else LOCAL_DB_NAME
+    db_user = DB_USER if azure_target else LOCAL_DB_USER
+    db_password = DB_PASSWORD if azure_target else LOCAL_DB_PASSWORD
+
+    parts = [
+        f"DRIVER={{{SQL_DRIVER}}}",
+        f"SERVER={normalized_server}",
+        f"DATABASE={database_name}",
+    ]
+
+    if db_user and db_password:
+        parts.extend([
+            f"UID={db_user}",
+            f"PWD={db_password}",
+        ])
+    else:
+        parts.append('Trusted_Connection=yes')
+
+    parts.extend([
+        f"Encrypt={encrypt_value}",
+        f"TrustServerCertificate={trust_cert_value}",
+        'MARS_Connection=yes',
+    ])
+
+    return ';'.join(parts) + ';'
+
+
+def get_connection_candidates() -> list[str]:
+    candidates = [DB_SERVER]
+    if not IS_AZURE_APP and DB_LOCAL_FALLBACK:
+        local_machine = os.environ.get('COMPUTERNAME', 'localhost')
+        candidates.extend([
+            LOCAL_DB_SERVER,
+            f'{local_machine}\\SQLEXPRESS',
+            'localhost\\SQLEXPRESS',
+            '.\\SQLEXPRESS',
+        ])
+
+    unique_candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = (candidate or '').strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            unique_candidates.append(normalized)
+    return unique_candidates
+
+
 def get_connection() -> pyodbc.Connection:
-    return pyodbc.connect(CONNECTION_STRING)
+    last_error: Exception | None = None
+    for server_name in get_connection_candidates():
+        try:
+            return pyodbc.connect(build_connection_string(server_name), timeout=DB_CONNECTION_TIMEOUT)
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError(f'Unable to connect to SQL Server: {last_error}')
 
 
 def normalize_upload_path(file_path: str) -> str:

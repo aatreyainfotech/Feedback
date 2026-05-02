@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import api from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -15,37 +15,45 @@ const Reports = () => {
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage] = useState(5);
+  const logoDataUrlRef = useRef(null);
 
   const loadImageAsDataURL = async (url) => {
+    if (logoDataUrlRef.current) {
+      return logoDataUrlRef.current;
+    }
+
     const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to load image');
     const blob = await response.blob();
-    return await new Promise((resolve, reject) => {
+    const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
+
+    logoDataUrlRef.current = dataUrl;
+    return dataUrl;
   };
 
   useEffect(() => {
-    fetchFeedback();
     fetchTemples();
   }, []);
 
-  const fetchFeedback = async () => {
+  const fetchFeedback = useCallback(async () => {
+    setLoading(true);
     try {
       const params = {};
       if (filterTemple !== 'all') params.temple_id = filterTemple;
       
-      const response = await api.get('/feedback', { params });
+      const response = await api.get('/feedback', { params, cacheTtlMs: 5000 });
       setFeedback(response.data);
     } catch (error) {
       toast.error('Failed to fetch feedback');
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterTemple]);
 
   const fetchTemples = async () => {
     try {
@@ -58,7 +66,7 @@ const Reports = () => {
 
   useEffect(() => {
     fetchFeedback();
-  }, [filterTemple]);
+  }, [fetchFeedback]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -207,11 +215,7 @@ const Reports = () => {
     toast.success('CSV downloaded successfully');
   };
 
-  if (loading) {
-    return <div className="text-center py-8">Loading...</div>;
-  }
-
-  const stats = {
+  const stats = useMemo(() => ({
     total: feedback.length,
     pending: feedback.filter((f) => f.status === 'Pending').length,
     inProgress: feedback.filter((f) => f.status === 'In Progress').length,
@@ -220,10 +224,17 @@ const Reports = () => {
     avgRating: feedback.length > 0
       ? (feedback.reduce((sum, f) => sum + f.rating, 0) / feedback.length).toFixed(1)
       : 0,
-  };
+  }), [feedback]);
 
-  const totalPages = Math.max(1, Math.ceil(feedback.length / rowsPerPage));
-  const pagedFeedback = feedback.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(feedback.length / rowsPerPage)), [feedback.length, rowsPerPage]);
+  const pagedFeedback = useMemo(
+    () => feedback.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage),
+    [feedback, currentPage, rowsPerPage]
+  );
+
+  if (loading) {
+    return <div className="text-center py-8">Loading...</div>;
+  }
   const handlePageChange = (newPage) => {
     if (newPage < 1 || newPage > totalPages) return;
     setCurrentPage(newPage);
