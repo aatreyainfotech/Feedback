@@ -35,6 +35,8 @@ const Officers = () => {
     { value: 'officer', label: 'Officer', description: 'Can view and update feedback status' },
     { value: 'supervisor', label: 'Supervisor', description: 'Can manage officers and feedback' },
     { value: 'eo', label: 'Executive Officer (EO)', description: 'Full access to temple operations' },
+    { value: 'asst_commissioner', label: 'Asst Commissioner', description: 'Regional oversight across temples' },
+    { value: 'commissioner', label: 'Commissioner', description: 'Top-level access across all temples' },
   ];
 
   const permissionOptions = [
@@ -245,6 +247,7 @@ const Officers = () => {
                     <SelectValue placeholder="Select temple" />
                   </SelectTrigger>
                   <SelectContent className="bg-white">
+                    <SelectItem value="all">All Temples</SelectItem>
                     {temples.map((temple) => (
                       <SelectItem key={temple.id} value={temple.id}>
                         {temple.name}

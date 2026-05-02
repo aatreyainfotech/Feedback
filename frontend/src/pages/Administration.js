@@ -31,6 +31,8 @@ const Administration = () => {
     { value: 'officer', label: 'Officer', color: 'bg-green-100 text-green-700' },
     { value: 'supervisor', label: 'Supervisor', color: 'bg-blue-100 text-blue-700' },
     { value: 'eo', label: 'Executive Officer', color: 'bg-purple-100 text-purple-700' },
+    { value: 'asst_commissioner', label: 'Asst Commissioner', color: 'bg-amber-100 text-amber-700' },
+    { value: 'commissioner', label: 'Commissioner', color: 'bg-red-100 text-red-700' },
   ];
 
   const permissionOptions = [
@@ -205,6 +207,7 @@ const Administration = () => {
                     <SelectValue placeholder="Select temple" />
                   </SelectTrigger>
                   <SelectContent className="bg-white">
+                    <SelectItem value="all">All Temples</SelectItem>
                     {temples.map((temple) => (
                       <SelectItem key={temple.id} value={temple.id}>
                         {temple.name}

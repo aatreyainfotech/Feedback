@@ -1263,7 +1263,10 @@ async def create_officer(officer: OfficerCreate, current_admin = Depends(get_cur
     
     # Get temple name
     temple_name = None
-    if officer.temple_id:
+    if officer.temple_id == 'all':
+        temple_name = 'All Temples'
+        officer.temple_id = None
+    elif officer.temple_id:
         temple = execute_query("SELECT name FROM temples WHERE id = ?", (officer.temple_id,), fetch_one=True)
         if temple:
             temple_name = temple['name']
@@ -1307,7 +1310,10 @@ async def update_officer(officer_id: str, officer: OfficerUpdate, current_admin 
         raise HTTPException(status_code=400, detail="Email already exists")
 
     temple_name = None
-    if officer.temple_id:
+    if officer.temple_id == 'all':
+        temple_name = 'All Temples'
+        officer.temple_id = None
+    elif officer.temple_id:
         temple = execute_query("SELECT name FROM temples WHERE id = ?", (officer.temple_id,), fetch_one=True)
         if temple:
             temple_name = temple['name']
