@@ -1488,9 +1488,10 @@ async def get_feedback(
 async def get_officer_feedback(current_officer = Depends(get_current_officer)):
     """Get feedback for current officer.
 
-    Officers assigned to a specific temple (or directly assigned to feedback) see
-    only their relevant items. Officers with no temple (All Temples scope –
-    e.g. Commissioner / Asst Commissioner) see feedback across every temple.
+    Scope rules:
+      * Commissioner / Asst Commissioner / officers with no temple assignment -> all feedback
+      * Supervisor / Executive Officer (eo) -> all feedback for their temple
+      * Officer -> only feedback assigned to them
     """
     if not current_officer:
         raise HTTPException(status_code=404, detail="Officer not found")
@@ -1498,9 +1499,11 @@ async def get_officer_feedback(current_officer = Depends(get_current_officer)):
     temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
     role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
 
-    # All-Temples scope (no temple_id) or elevated roles -> see everything
-    if not temple_id or role in ('commissioner', 'asst_commissioner'):
+    if (not temple_id) or role in ('commissioner', 'asst_commissioner'):
         return await get_feedback()
+
+    if role in ('supervisor', 'eo'):
+        return await get_feedback(temple_id=str(temple_id))
 
     officer_id = str(current_officer['id'])
     return await get_feedback(officer_id=officer_id)
@@ -1795,8 +1798,15 @@ async def get_officer_stats(current_officer = Depends(get_current_officer)):
     temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
     role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
     all_scope = (not temple_id) or role in ('commissioner', 'asst_commissioner')
+    temple_scope = (not all_scope) and role in ('supervisor', 'eo')
 
-    cache_key = f"stats:officer:{'all' if all_scope else officer_id}"
+    if all_scope:
+        cache_key = "stats:officer:all"
+    elif temple_scope:
+        cache_key = f"stats:officer:temple:{temple_id}"
+    else:
+        cache_key = f"stats:officer:{officer_id}"
+
     cached = get_cached_response(cache_key)
     if cached is not None:
         return cached
@@ -1811,6 +1821,20 @@ async def get_officer_stats(current_officer = Depends(get_current_officer)):
                 COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
             FROM feedback
             """,
+            fetch_one=True,
+        ) or {}
+    elif temple_scope:
+        summary = execute_query(
+            """
+            SELECT
+                COUNT(*) AS total_assigned,
+                COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+                COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+                COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved
+            FROM feedback
+            WHERE temple_id = ?
+            """,
+            (str(temple_id),),
             fetch_one=True,
         ) or {}
     else:
