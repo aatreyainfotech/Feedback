@@ -2288,6 +2288,61 @@ class KioskMediaOrder(BaseModel):
     ids: List[str]
 
 
+def ensure_kiosk_schema():
+    """Create the kiosk tables without ever blocking the rest of startup.
+
+    Every gunicorn worker runs startup at once, so another worker can win the
+    race between the existence check and the create (SQL errors 2714 and 2627).
+    """
+    statements = [
+        (
+            """
+            IF OBJECT_ID('kiosk_media', 'U') IS NULL
+            BEGIN
+                CREATE TABLE kiosk_media (
+                    id NVARCHAR(36) NOT NULL PRIMARY KEY,
+                    file_path NVARCHAR(500) NOT NULL,
+                    media_type NVARCHAR(10) NOT NULL,
+                    display_order INT NOT NULL DEFAULT 0,
+                    created_at DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+                );
+            END
+            """,
+            None,
+        ),
+        (
+            """
+            IF OBJECT_ID('kiosk_settings', 'U') IS NULL
+            BEGIN
+                CREATE TABLE kiosk_settings (
+                    id INT NOT NULL PRIMARY KEY,
+                    idle_seconds INT NOT NULL,
+                    image_seconds INT NOT NULL
+                );
+            END
+            """,
+            None,
+        ),
+        (
+            """
+            IF NOT EXISTS (SELECT 1 FROM kiosk_settings WHERE id = 1)
+            BEGIN
+                INSERT INTO kiosk_settings (id, idle_seconds, image_seconds) VALUES (1, ?, ?);
+            END
+            """,
+            (KIOSK_DEFAULT_SETTINGS['idle_seconds'], KIOSK_DEFAULT_SETTINGS['image_seconds']),
+        ),
+    ]
+    for query, params in statements:
+        try:
+            execute_query(query, params)
+        except HTTPException as exc:
+            if '2714' in str(exc.detail) or '2627' in str(exc.detail):
+                logger.info('Kiosk schema already created by another worker')
+            else:
+                logger.error('Kiosk schema setup failed: %s', exc.detail)
+
+
 def rebuild_kiosk_playlist() -> dict:
     """Publish the playlist from SQL to a shared JSON file.
 
@@ -2457,43 +2512,7 @@ async def startup():
             """
         )
 
-        execute_query(
-            """
-            IF OBJECT_ID('kiosk_media', 'U') IS NULL
-            BEGIN
-                CREATE TABLE kiosk_media (
-                    id NVARCHAR(36) NOT NULL PRIMARY KEY,
-                    file_path NVARCHAR(500) NOT NULL,
-                    media_type NVARCHAR(10) NOT NULL,
-                    display_order INT NOT NULL DEFAULT 0,
-                    created_at DATETIME2 NOT NULL DEFAULT GETUTCDATE()
-                );
-            END
-            """
-        )
-
-        execute_query(
-            """
-            IF OBJECT_ID('kiosk_settings', 'U') IS NULL
-            BEGIN
-                CREATE TABLE kiosk_settings (
-                    id INT NOT NULL PRIMARY KEY,
-                    idle_seconds INT NOT NULL,
-                    image_seconds INT NOT NULL
-                );
-            END
-            """
-        )
-
-        execute_query(
-            """
-            IF NOT EXISTS (SELECT 1 FROM kiosk_settings WHERE id = 1)
-            BEGIN
-                INSERT INTO kiosk_settings (id, idle_seconds, image_seconds) VALUES (1, ?, ?);
-            END
-            """,
-            (KIOSK_DEFAULT_SETTINGS['idle_seconds'], KIOSK_DEFAULT_SETTINGS['image_seconds']),
-        )
+        ensure_kiosk_schema()
 
         # Backfill: any existing admin without explicit permissions gets full access
         execute_query(
