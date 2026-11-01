@@ -3,17 +3,24 @@ import api, { API } from '../utils/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ArrowDown, ArrowUp, MonitorPlay, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ACCEPTED_TYPES = '.jpg,.jpeg,.png,.webp,.gif,.mp4,.webm';
+const ALL_TEMPLES = 'all';
 
 const KioskMediaManager = () => {
   const [media, setMedia] = useState([]);
   const [settings, setSettings] = useState({ idle_seconds: 60, image_seconds: 10 });
   const [loading, setLoading] = useState(true);
   const [uploadStatus, setUploadStatus] = useState('');
+  const [temples, setTemples] = useState([]);
+  const [selectedTemple, setSelectedTemple] = useState(ALL_TEMPLES);
   const fileInputRef = useRef(null);
+
+  const selectedTempleId = selectedTemple === ALL_TEMPLES ? null : selectedTemple.toLowerCase();
+  const visibleMedia = media.filter((m) => (m.temple_id || null) === selectedTempleId);
 
   const applyPlaylist = (data) => {
     setMedia(data.media);
@@ -21,10 +28,13 @@ const KioskMediaManager = () => {
   };
 
   useEffect(() => {
-    api.get('/kiosk/playlist')
+    api.get('/kiosk/media')
       .then((res) => applyPlaylist(res.data))
       .catch((e) => toast.error(e.response?.data?.detail || 'Failed to load screensaver media'))
       .finally(() => setLoading(false));
+    api.get('/temples')
+      .then((res) => setTemples(res.data))
+      .catch((e) => toast.error(e.response?.data?.detail || 'Failed to load temples'));
   }, []);
 
   const handleFiles = async (e) => {
@@ -36,6 +46,7 @@ const KioskMediaManager = () => {
       try {
         const body = new FormData();
         body.append('file', file);
+        if (selectedTempleId) body.append('temple_id', selectedTempleId);
         const res = await api.post('/kiosk/media', body, {
           headers: { 'Content-Type': 'multipart/form-data' },
           // Large videos on a slow connection can outlast the default API timeout.
@@ -54,7 +65,7 @@ const KioskMediaManager = () => {
   };
 
   const move = async (index, offset) => {
-    const reordered = [...media];
+    const reordered = [...visibleMedia];
     const [item] = reordered.splice(index, 1);
     reordered.splice(index + offset, 0, item);
     try {
@@ -97,7 +108,7 @@ const KioskMediaManager = () => {
           <MonitorPlay className="text-[#721C24]" size={22} />
           <div>
             <h2 className="text-xl font-bold text-[#721C24]">Tablet Screensaver</h2>
-            <p className="text-sm text-[#4A5568]">Plays on all temple tablets when idle. Touching the screen opens the feedback app.</p>
+            <p className="text-sm text-[#4A5568]">Plays on temple tablets when idle. Touching the screen opens the feedback app.</p>
           </div>
         </div>
         <input
@@ -121,6 +132,21 @@ const KioskMediaManager = () => {
       </div>
 
       <div className="p-6 space-y-6">
+        <div>
+          <Label className="text-[#721C24]">Temple</Label>
+          <Select value={selectedTemple} onValueChange={setSelectedTemple}>
+            <SelectTrigger data-testid="kiosk-temple-select" className="mt-1.5 max-w-md"><SelectValue /></SelectTrigger>
+            <SelectContent className="bg-white">
+              <SelectItem value={ALL_TEMPLES}>All Temples (default)</SelectItem>
+              {temples.map((temple) => (
+                <SelectItem key={temple.id} value={String(temple.id)}>{temple.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-[#4A5568] mt-2">
+            Uploads go to the temple selected here. A temple with its own media plays only that; other temples play the All Temples media.
+          </p>
+        </div>
         <p className="text-sm text-[#4A5568]">
           Images: JPG, PNG, WEBP or GIF, up to 10 MB. Videos: MP4 or WEBM, up to 100 MB. Videos play without sound.
         </p>
@@ -128,13 +154,15 @@ const KioskMediaManager = () => {
 
         {loading ? (
           <div className="text-center py-8">Loading...</div>
-        ) : media.length === 0 ? (
+        ) : visibleMedia.length === 0 ? (
           <p className="text-center py-8 text-[#4A5568]">
-            Nothing uploaded yet. Idle tablets show the temple name and logo.
+            {selectedTempleId
+              ? 'Nothing uploaded for this temple. Its tablets play the All Temples media.'
+              : 'Nothing uploaded for all temples. Tablets of temples without their own media show the temple name and logo.'}
           </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {media.map((item, index) => (
+            {visibleMedia.map((item, index) => (
               <div key={item.id} data-testid="kiosk-media-item" className="border border-[#E2E8F0] rounded-xl overflow-hidden bg-white">
                 <div className="aspect-video bg-black">
                   {item.type === 'video' ? (
@@ -149,7 +177,7 @@ const KioskMediaManager = () => {
                     <Button variant="ghost" size="sm" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Play earlier">
                       <ArrowUp size={16} />
                     </Button>
-                    <Button variant="ghost" size="sm" disabled={index === media.length - 1} onClick={() => move(index, 1)} aria-label="Play later">
+                    <Button variant="ghost" size="sm" disabled={index === visibleMedia.length - 1} onClick={() => move(index, 1)} aria-label="Play later">
                       <ArrowDown size={16} />
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(item)} aria-label="Remove" className="text-red-600 hover:bg-red-50">

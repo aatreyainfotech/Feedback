@@ -2292,7 +2292,7 @@ def ensure_kiosk_schema():
     """Create the kiosk tables without ever blocking the rest of startup.
 
     Every gunicorn worker runs startup at once, so another worker can win the
-    race between the existence check and the create (SQL errors 2714 and 2627).
+    race between the existence check and the create (SQL errors 2714, 2627, 2705).
     """
     statements = [
         (
@@ -2332,12 +2332,21 @@ def ensure_kiosk_schema():
             """,
             (KIOSK_DEFAULT_SETTINGS['idle_seconds'], KIOSK_DEFAULT_SETTINGS['image_seconds']),
         ),
+        (
+            """
+            IF COL_LENGTH('kiosk_media', 'temple_id') IS NULL
+            BEGIN
+                ALTER TABLE kiosk_media ADD temple_id NVARCHAR(36) NULL;
+            END
+            """,
+            None,
+        ),
     ]
     for query, params in statements:
         try:
             execute_query(query, params)
         except HTTPException as exc:
-            if '2714' in str(exc.detail) or '2627' in str(exc.detail):
+            if any(code in str(exc.detail) for code in ('2714', '2627', '2705')):
                 logger.info('Kiosk schema already created by another worker')
             else:
                 logger.error('Kiosk schema setup failed: %s', exc.detail)
@@ -2350,7 +2359,7 @@ def rebuild_kiosk_playlist() -> dict:
     to keep that traffic off the database.
     """
     rows = execute_query(
-        "SELECT id, file_path, media_type FROM kiosk_media ORDER BY display_order, created_at",
+        "SELECT id, file_path, media_type, temple_id FROM kiosk_media ORDER BY display_order, created_at",
         fetch_all=True,
     ) or []
     settings = execute_query(
@@ -2361,7 +2370,12 @@ def rebuild_kiosk_playlist() -> dict:
         "idle_seconds": settings['idle_seconds'],
         "image_seconds": settings['image_seconds'],
         "media": [
-            {"id": str(row['id']), "path": row['file_path'], "type": row['media_type']}
+            {
+                "id": str(row['id']),
+                "path": row['file_path'],
+                "type": row['media_type'],
+                "temple_id": str(row['temple_id']).lower() if row['temple_id'] else None,
+            }
             for row in rows
         ],
     }
@@ -2377,9 +2391,7 @@ def rebuild_kiosk_playlist() -> dict:
     return playlist
 
 
-@app.get("/api/kiosk/playlist")
-async def get_kiosk_playlist():
-    """Public: what registered tablets show while idle."""
+def read_kiosk_playlist() -> dict:
     try:
         with open(KIOSK_PLAYLIST_PATH, encoding='utf-8') as f:
             return json.load(f)
@@ -2387,9 +2399,46 @@ async def get_kiosk_playlist():
         return rebuild_kiosk_playlist()
 
 
+@app.get("/api/kiosk/playlist")
+async def get_kiosk_playlist(temple_id: Optional[str] = None):
+    """Public: what a registered tablet shows while idle.
+
+    A temple with its own media shows only that; any other tablet shows the
+    media uploaded for all temples.
+    """
+    playlist = read_kiosk_playlist()
+    media = playlist['media']
+    own_media = [m for m in media if temple_id and m.get('temple_id') == temple_id.lower()]
+    shared_media = [m for m in media if not m.get('temple_id')]
+    return {**playlist, "media": own_media or shared_media}
+
+
+@app.get("/api/kiosk/media")
+async def list_kiosk_media(current_superadmin = Depends(get_current_superadmin)):
+    """Everything uploaded for every temple (Super Admin only)."""
+    return read_kiosk_playlist()
+
+
 @app.post("/api/kiosk/media")
-async def upload_kiosk_media(file: UploadFile = File(...), current_superadmin = Depends(get_current_superadmin)):
-    """Add an image or video to the kiosk screensaver (Super Admin only)."""
+async def upload_kiosk_media(
+    file: UploadFile = File(...),
+    temple_id: Optional[str] = Form(None),
+    current_superadmin = Depends(get_current_superadmin),
+):
+    """Add an image or video to the kiosk screensaver (Super Admin only).
+
+    Without temple_id the item plays on every temple without its own media.
+    """
+    if temple_id:
+        try:
+            temple_id = str(uuid.UUID(temple_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid temple")
+        if not execute_query("SELECT id FROM temples WHERE id = ?", (temple_id,), fetch_one=True):
+            raise HTTPException(status_code=404, detail="Temple not found")
+    else:
+        temple_id = None
+
     file_ext = os.path.splitext(file.filename or '')[1].lower()
     if file_ext in KIOSK_IMAGE_EXTENSIONS:
         media_type, max_bytes = 'image', KIOSK_MAX_IMAGE_BYTES
@@ -2416,8 +2465,8 @@ async def upload_kiosk_media(file: UploadFile = File(...), current_superadmin = 
         fetch_one=True,
     )['next_order']
     execute_query(
-        "INSERT INTO kiosk_media (id, file_path, media_type, display_order) VALUES (?, ?, ?, ?)",
-        (str(uuid.uuid4()), output_name, media_type, next_order),
+        "INSERT INTO kiosk_media (id, file_path, media_type, display_order, temple_id) VALUES (?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), output_name, media_type, next_order, temple_id),
     )
     return rebuild_kiosk_playlist()
 

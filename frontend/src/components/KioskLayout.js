@@ -204,7 +204,7 @@ const KioskLayout = () => {
 
     const refresh = async () => {
       try {
-        const { data } = await api.get('/kiosk/playlist');
+        const { data } = await api.get('/kiosk/playlist', { params: { temple_id: temple.id } });
         setPlaylist(data);
         localStorage.setItem(PLAYLIST_STORAGE_KEY, JSON.stringify(data));
         if (!syncingRef.current) {
