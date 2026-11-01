@@ -167,6 +167,8 @@ def get_media_type(file_path: str) -> str:
         return 'image/png'
     if ext == '.gif':
         return 'image/gif'
+    if ext == '.webp':
+        return 'image/webp'
     return 'application/octet-stream'
 
 
@@ -2266,6 +2268,139 @@ async def get_file(file_path: str, request: Request):
     return FileResponse(full_path, media_type=media_type, headers={'Accept-Ranges': 'bytes'})
 
 # =====================================================
+# KIOSK SCREENSAVER ENDPOINTS
+# =====================================================
+
+KIOSK_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+KIOSK_VIDEO_EXTENSIONS = {'.mp4', '.webm'}
+KIOSK_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+KIOSK_MAX_VIDEO_BYTES = 100 * 1024 * 1024
+KIOSK_DEFAULT_SETTINGS = {"idle_seconds": 60, "image_seconds": 10}
+KIOSK_PLAYLIST_PATH = os.path.join(UPLOAD_DIR, 'kiosk', 'playlist.json')
+
+
+class KioskSettings(BaseModel):
+    idle_seconds: int = Field(ge=10, le=3600)
+    image_seconds: int = Field(ge=3, le=300)
+
+
+class KioskMediaOrder(BaseModel):
+    ids: List[str]
+
+
+def rebuild_kiosk_playlist() -> dict:
+    """Publish the playlist from SQL to a shared JSON file.
+
+    Tablets poll the playlist around the clock, so reads come from this file:
+    polling SQL would stop Azure SQL serverless from ever auto-pausing.
+    """
+    rows = execute_query(
+        "SELECT id, file_path, media_type FROM kiosk_media ORDER BY display_order, created_at",
+        fetch_all=True,
+    ) or []
+    settings = execute_query(
+        "SELECT idle_seconds, image_seconds FROM kiosk_settings WHERE id = 1",
+        fetch_one=True,
+    ) or KIOSK_DEFAULT_SETTINGS
+    playlist = {
+        "idle_seconds": settings['idle_seconds'],
+        "image_seconds": settings['image_seconds'],
+        "media": [
+            {"id": str(row['id']), "path": row['file_path'], "type": row['media_type']}
+            for row in rows
+        ],
+    }
+
+    temp_path = f"{KIOSK_PLAYLIST_PATH}.{uuid.uuid4()}.tmp"
+    try:
+        os.makedirs(os.path.dirname(KIOSK_PLAYLIST_PATH), exist_ok=True)
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(playlist, f)
+        os.replace(temp_path, KIOSK_PLAYLIST_PATH)
+    except OSError as exc:
+        logger.error('Failed to publish kiosk playlist: %s', exc)
+    return playlist
+
+
+@app.get("/api/kiosk/playlist")
+async def get_kiosk_playlist():
+    """Public: what registered tablets show while idle."""
+    try:
+        with open(KIOSK_PLAYLIST_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return rebuild_kiosk_playlist()
+
+
+@app.post("/api/kiosk/media")
+async def upload_kiosk_media(file: UploadFile = File(...), current_superadmin = Depends(get_current_superadmin)):
+    """Add an image or video to the kiosk screensaver (Super Admin only)."""
+    file_ext = os.path.splitext(file.filename or '')[1].lower()
+    if file_ext in KIOSK_IMAGE_EXTENSIONS:
+        media_type, max_bytes = 'image', KIOSK_MAX_IMAGE_BYTES
+    elif file_ext in KIOSK_VIDEO_EXTENSIONS:
+        media_type, max_bytes = 'video', KIOSK_MAX_VIDEO_BYTES
+    else:
+        raise HTTPException(status_code=400, detail="Use a JPG, PNG, WEBP or GIF image, or an MP4 or WEBM video")
+
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(file_content) > max_bytes:
+        raise HTTPException(status_code=400, detail=f"{media_type.capitalize()} must be {max_bytes // (1024 * 1024)} MB or smaller")
+
+    output_name = f"kiosk/{uuid.uuid4()}{file_ext}"
+    path = get_primary_upload_path(output_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    async with aiofiles.open(path, 'wb') as f:
+        await f.write(file_content)
+
+    save_upload_record(output_name, file.filename, file_ext, len(file_content), current_superadmin.get('id'), file_content)
+    next_order = execute_query(
+        "SELECT ISNULL(MAX(display_order), 0) + 1 AS next_order FROM kiosk_media",
+        fetch_one=True,
+    )['next_order']
+    execute_query(
+        "INSERT INTO kiosk_media (id, file_path, media_type, display_order) VALUES (?, ?, ?, ?)",
+        (str(uuid.uuid4()), output_name, media_type, next_order),
+    )
+    return rebuild_kiosk_playlist()
+
+
+@app.put("/api/kiosk/media/order")
+async def reorder_kiosk_media(payload: KioskMediaOrder, current_superadmin = Depends(get_current_superadmin)):
+    """Set the screensaver play order (Super Admin only)."""
+    for position, media_id in enumerate(payload.ids, start=1):
+        execute_query("UPDATE kiosk_media SET display_order = ? WHERE id = ?", (position, media_id))
+    return rebuild_kiosk_playlist()
+
+
+@app.delete("/api/kiosk/media/{media_id}")
+async def delete_kiosk_media(media_id: str, current_superadmin = Depends(get_current_superadmin)):
+    """Remove an image or video from the screensaver (Super Admin only)."""
+    row = execute_query("SELECT file_path FROM kiosk_media WHERE id = ?", (media_id,), fetch_one=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    execute_query("DELETE FROM kiosk_media WHERE id = ?", (media_id,))
+    execute_query("DELETE FROM file_uploads WHERE file_path = ?", (row['file_path'],))
+    try:
+        os.remove(get_primary_upload_path(row['file_path']))
+    except OSError as exc:
+        logger.warning('Could not remove kiosk file %s: %s', row['file_path'], exc)
+    return rebuild_kiosk_playlist()
+
+
+@app.put("/api/kiosk/settings")
+async def update_kiosk_settings(payload: KioskSettings, current_superadmin = Depends(get_current_superadmin)):
+    """Set screensaver timings (Super Admin only)."""
+    execute_query(
+        "UPDATE kiosk_settings SET idle_seconds = ?, image_seconds = ? WHERE id = 1",
+        (payload.idle_seconds, payload.image_seconds),
+    )
+    return rebuild_kiosk_playlist()
+
+# =====================================================
 # STARTUP
 # =====================================================
 
@@ -2320,6 +2455,44 @@ async def startup():
                 ALTER TABLE users ADD permissions NVARCHAR(MAX) NULL;
             END
             """
+        )
+
+        execute_query(
+            """
+            IF OBJECT_ID('kiosk_media', 'U') IS NULL
+            BEGIN
+                CREATE TABLE kiosk_media (
+                    id NVARCHAR(36) NOT NULL PRIMARY KEY,
+                    file_path NVARCHAR(500) NOT NULL,
+                    media_type NVARCHAR(10) NOT NULL,
+                    display_order INT NOT NULL DEFAULT 0,
+                    created_at DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+                );
+            END
+            """
+        )
+
+        execute_query(
+            """
+            IF OBJECT_ID('kiosk_settings', 'U') IS NULL
+            BEGIN
+                CREATE TABLE kiosk_settings (
+                    id INT NOT NULL PRIMARY KEY,
+                    idle_seconds INT NOT NULL,
+                    image_seconds INT NOT NULL
+                );
+            END
+            """
+        )
+
+        execute_query(
+            """
+            IF NOT EXISTS (SELECT 1 FROM kiosk_settings WHERE id = 1)
+            BEGIN
+                INSERT INTO kiosk_settings (id, idle_seconds, image_seconds) VALUES (1, ?, ?);
+            END
+            """,
+            (KIOSK_DEFAULT_SETTINGS['idle_seconds'], KIOSK_DEFAULT_SETTINGS['image_seconds']),
         )
 
         # Backfill: any existing admin without explicit permissions gets full access

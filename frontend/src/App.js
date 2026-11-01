@@ -18,6 +18,7 @@ import PublicFeedbackSubmit from "./pages/PublicFeedbackSubmit";
 import TempleSetup from "./pages/TempleSetup";
 import AdminLayout from "./components/AdminLayout";
 import OfficerLayout from "./components/OfficerLayout";
+import KioskLayout from "./components/KioskLayout";
 import { Toaster } from "./components/ui/sonner";
 
 function App() {
@@ -25,16 +26,26 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Navigate to="/setup-temple" replace />} />
+          {/* After a reboot a registered tablet goes straight back to the kiosk */}
+          <Route
+            path="/"
+            element={<Navigate to={localStorage.getItem('registered_temple') ? '/submit-feedback' : '/setup-temple'} replace />}
+          />
           <Route path="/login" element={<AdminLogin />} />
           <Route path="/officer/login" element={<OfficerLogin />} />
           
           {/* Temple Setup (Tablet Registration) */}
           <Route path="/setup-temple" element={<TempleSetup />} />
           
-          {/* Public Feedback Submission */}
-          <Route path="/submit-feedback" element={<PublicFeedbackSubmit />} />
-          
+          {/* Kiosk pages: idle tablets show the Super Admin's screensaver media */}
+          <Route element={<KioskLayout />}>
+            {/* Public Feedback Submission */}
+            <Route path="/submit-feedback" element={<PublicFeedbackSubmit />} />
+
+            {/* Display Screen */}
+            <Route path="/display" element={<DisplayScreen />} />
+          </Route>
+
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<Navigate to="/admin/dashboard" replace />} />
@@ -54,9 +65,6 @@ function App() {
             <Route index element={<Navigate to="/officer/dashboard" replace />} />
             <Route path="dashboard" element={<OfficerDashboard />} />
           </Route>
-          
-          {/* Display Screen */}
-          <Route path="/display" element={<DisplayScreen />} />
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" richColors />

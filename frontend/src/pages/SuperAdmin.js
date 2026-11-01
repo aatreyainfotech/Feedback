@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../utils/api';
+import KioskMediaManager from '../components/KioskMediaManager';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -260,6 +261,8 @@ const SuperAdmin = () => {
           </Table>
         </div>
       </div>
+
+      <KioskMediaManager />
     </div>
   );
 };

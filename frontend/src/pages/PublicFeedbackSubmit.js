@@ -10,6 +10,7 @@ import { Camera, Video, X, Star, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { useKioskBusy } from '../components/KioskLayout';
 
 const PublicFeedbackSubmit = () => {
   const navigate = useNavigate();
@@ -35,6 +36,15 @@ const PublicFeedbackSubmit = () => {
   const [services, setServices] = useState([]);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceDetectionSupported, setFaceDetectionSupported] = useState(true);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+
+  // Recording, uploading and watching the preview all happen without touching the screen.
+  useKioskBusy(isRecording || submitting || previewPlaying);
+
+  // Recordings are large and this page now stays open for months at a time.
+  useEffect(() => () => {
+    if (videoPreview) URL.revokeObjectURL(videoPreview);
+  }, [videoPreview]);
 
   const mediaRecorderRef = useRef(null);
   const videoStreamRef = useRef(null);
@@ -828,6 +838,10 @@ if (blob.size === 0) {
                     <video
                       src={videoPreview}
                       controls
+                      onPlay={() => setPreviewPlaying(true)}
+                      onPause={() => setPreviewPlaying(false)}
+                      onEnded={() => setPreviewPlaying(false)}
+                      onEmptied={() => setPreviewPlaying(false)}
                       className="w-full h-64 rounded-lg bg-black object-cover"
                     />
                     <div className="flex gap-3">
