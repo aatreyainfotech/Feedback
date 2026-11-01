@@ -2291,8 +2291,8 @@ class KioskMediaOrder(BaseModel):
 def rebuild_kiosk_playlist() -> dict:
     """Publish the playlist from SQL to a shared JSON file.
 
-    Tablets poll the playlist around the clock, so reads come from this file:
-    polling SQL would stop Azure SQL serverless from ever auto-pausing.
+    Tablets poll the playlist around the clock, so reads come from this file
+    to keep that traffic off the database.
     """
     rows = execute_query(
         "SELECT id, file_path, media_type FROM kiosk_media ORDER BY display_order, created_at",

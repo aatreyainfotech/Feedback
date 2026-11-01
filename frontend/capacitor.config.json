@@ -6,8 +6,7 @@
     "androidScheme": "https",
     "hostname": "localhost",
     "allowNavigation": [
-      "aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net",
-      "aatreyainfo-feedback-fefbeqvc3dahrg2.centralindia-01.azurewebsites.net",
+      "fb-api.aatreya.org",
       "fb.aatreya.org",
       "*.aatreya.org",
       "yellow-ocean-07bef8000.1.azurestaticapps.net",

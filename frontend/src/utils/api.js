@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 const BACKEND_OVERRIDE_KEY = 'backend_url';
-const MOBILE_LAN_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
-const CLOUD_BACKEND_FALLBACK = 'https://aatreyainfo-feedback-fefbeqcve3dahrg2.centralindia-01.azurewebsites.net';
+const MOBILE_LAN_FALLBACK = 'https://fb-api.aatreya.org';
+const CLOUD_BACKEND_FALLBACK = 'https://fb-api.aatreya.org';
 // Azure SQL serverless can take 30-60s to wake from auto-pause; use a generous timeout
 // so the very first request after the backend was idle does not surface as a Network Error.
 const DEFAULT_TIMEOUT_MS = 60000;
@@ -49,7 +49,13 @@ const buildParamsString = (params = {}) => {
 
 const getStoredBackendUrl = () => {
   try {
-    return normalizeUrl(localStorage.getItem(BACKEND_OVERRIDE_KEY));
+    const stored = normalizeUrl(localStorage.getItem(BACKEND_OVERRIDE_KEY));
+    // Devices registered before the AWS move saved the retired Azure backend here.
+    if (stored.includes('azurewebsites.net')) {
+      localStorage.removeItem(BACKEND_OVERRIDE_KEY);
+      return '';
+    }
+    return stored;
   } catch {
     return '';
   }
