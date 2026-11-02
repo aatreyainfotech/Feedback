@@ -2277,6 +2277,7 @@ KIOSK_MAX_IMAGE_BYTES = 10 * 1024 * 1024
 KIOSK_MAX_VIDEO_BYTES = 100 * 1024 * 1024
 KIOSK_DEFAULT_SETTINGS = {"idle_seconds": 60, "image_seconds": 10}
 KIOSK_PLAYLIST_PATH = os.path.join(UPLOAD_DIR, 'kiosk', 'playlist.json')
+KIOSK_APP_PATH = os.path.join(UPLOAD_DIR, 'app', 'temple-feedback.apk')
 
 
 class KioskSettings(BaseModel):
@@ -2411,6 +2412,34 @@ async def get_kiosk_playlist(temple_id: Optional[str] = None):
     own_media = [m for m in media if temple_id and m.get('temple_id') == temple_id.lower()]
     shared_media = [m for m in media if not m.get('temple_id')]
     return {**playlist, "media": own_media or shared_media}
+
+
+@app.get("/api/kiosk/app/info")
+async def get_kiosk_app_info():
+    """Public: whether the tablet APK has been published on this server."""
+    try:
+        stat = os.stat(KIOSK_APP_PATH)
+    except OSError:
+        return {"available": False}
+    return {
+        "available": True,
+        "size": stat.st_size,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/kiosk/app")
+async def download_kiosk_app():
+    """Public, so a tablet browser can install the app without an admin login."""
+    if not os.path.isfile(KIOSK_APP_PATH):
+        raise HTTPException(status_code=404, detail="Tablet app has not been published")
+    return FileResponse(
+        KIOSK_APP_PATH,
+        media_type='application/vnd.android.package-archive',
+        filename='temple-feedback.apk',
+        # Cloudflare caches .apk files by default, which would keep serving an old version.
+        headers={'Cache-Control': 'no-store'},
+    )
 
 
 @app.get("/api/kiosk/media")

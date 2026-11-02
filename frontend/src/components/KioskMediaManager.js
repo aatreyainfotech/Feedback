@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { ArrowDown, ArrowUp, MonitorPlay, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Download, MonitorPlay, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 const ACCEPTED_TYPES = '.jpg,.jpeg,.png,.webp,.gif,.mp4,.webm';
@@ -16,6 +16,7 @@ const KioskMediaManager = () => {
   const [loading, setLoading] = useState(true);
   const [uploadStatus, setUploadStatus] = useState('');
   const [temples, setTemples] = useState([]);
+  const [appInfo, setAppInfo] = useState(null);
   const [selectedTemple, setSelectedTemple] = useState(ALL_TEMPLES);
   const fileInputRef = useRef(null);
 
@@ -32,6 +33,9 @@ const KioskMediaManager = () => {
       .then((res) => applyPlaylist(res.data))
       .catch((e) => toast.error(e.response?.data?.detail || 'Failed to load screensaver media'))
       .finally(() => setLoading(false));
+    api.get('/kiosk/app/info')
+      .then((res) => setAppInfo(res.data))
+      .catch(() => setAppInfo({ available: false }));
     api.get('/temples')
       .then((res) => setTemples(res.data))
       .catch((e) => toast.error(e.response?.data?.detail || 'Failed to load temples'));
@@ -132,6 +136,25 @@ const KioskMediaManager = () => {
       </div>
 
       <div className="p-6 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-[#E2E8F0]">
+          <div>
+            <p className="font-semibold text-[#721C24]">Tablet App (APK)</p>
+            <p className="text-sm text-[#4A5568]">
+              {appInfo?.available
+                ? `${(appInfo.size / (1024 * 1024)).toFixed(1)} MB, updated ${new Date(appInfo.updated_at).toLocaleDateString()}. Open this page in the tablet's browser to install directly.`
+                : 'Not published on the server yet.'}
+            </p>
+          </div>
+          {appInfo?.available && (
+            <Button asChild variant="outline" className="border-2 border-[#721C24] text-[#721C24] hover:bg-[#721C24] hover:text-white">
+              <a href={`${API}/kiosk/app`} data-testid="kiosk-app-download">
+                <Download size={18} className="mr-2" />
+                Download Tablet App
+              </a>
+            </Button>
+          )}
+        </div>
+
         <div>
           <Label className="text-[#721C24]">Temple</Label>
           <Select value={selectedTemple} onValueChange={setSelectedTemple}>
