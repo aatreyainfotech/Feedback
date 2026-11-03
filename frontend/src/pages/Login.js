@@ -7,7 +7,20 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 
-const OfficerLogin = () => {
+// Admins and officers live in separate tables, so one form tries the admin login and then the officer login.
+const authenticate = async (credentials) => {
+  try {
+    const response = await axios.post(`${API}/auth/admin/login`, credentials);
+    return { data: response.data, home: '/admin/dashboard' };
+  } catch (error) {
+    if (error.response?.status !== 401) throw error;
+  }
+  const response = await axios.post(`${API}/auth/officer/login`, credentials);
+  return { data: response.data, home: '/officer/dashboard' };
+};
+
+const Login = () => {
+  // Secure login - credentials hidden from UI
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,15 +31,12 @@ const OfficerLogin = () => {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API}/auth/officer/login`, {
-        email,
-        password,
-      });
+      const { data, home } = await authenticate({ email, password });
 
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('user', JSON.stringify(response.data.user));
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
       toast.success('Login successful!');
-      navigate('/officer/dashboard');
+      navigate(home);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Login failed');
     } finally {
@@ -46,7 +56,7 @@ const OfficerLogin = () => {
 
       <div className="relative z-10 bg-white/95 backdrop-blur-sm p-8 rounded-2xl shadow-2xl w-full max-w-md">
         <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold text-[#721C24] mb-2">Officer Login</h1>
+          <h1 className="text-4xl font-bold text-[#721C24] mb-2">Feedback Login</h1>
           <p className="text-[#4A5568]">Temple Feedback Management System</p>
         </div>
 
@@ -60,8 +70,8 @@ const OfficerLogin = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              data-testid="officer-email-input"
-              placeholder="officer@temple.com"
+              data-testid="login-email-input"
+              placeholder="you@temple.com"
               className="mt-1.5 border-[#E2E8F0] focus:border-[#721C24] focus:ring-[#721C24]"
               required
             />
@@ -76,7 +86,7 @@ const OfficerLogin = () => {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              data-testid="officer-password-input"
+              data-testid="login-password-input"
               placeholder="Enter your password"
               className="mt-1.5 border-[#E2E8F0] focus:border-[#721C24] focus:ring-[#721C24]"
               required
@@ -86,24 +96,15 @@ const OfficerLogin = () => {
           <Button
             type="submit"
             disabled={loading}
-            data-testid="officer-login-button"
+            data-testid="login-button"
             className="w-full bg-[#721C24] hover:bg-[#5A161C] text-white py-6 text-lg rounded-lg transition-all duration-300"
           >
             {loading ? 'Logging in...' : 'Login'}
           </Button>
         </form>
-
-        <div className="mt-6 text-center">
-          <button
-            onClick={() => navigate('/login')}
-            className="text-sm text-[#721C24] hover:underline font-medium"
-          >
-            ← Back to Admin Login
-          </button>
-        </div>
       </div>
     </div>
   );
 };
 
-export default OfficerLogin;
+export default Login;

@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./App.css";
 
-import AdminLogin from "./pages/AdminLogin";
+import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import Temples from "./pages/Temples";
 import Officers from "./pages/Officers";
@@ -11,7 +11,6 @@ import WhatsAppLogs from "./pages/WhatsAppLogs";
 import Reports from "./pages/Reports";
 import Administration from "./pages/Administration";
 import SuperAdmin from "./pages/SuperAdmin";
-import OfficerLogin from "./pages/OfficerLogin";
 import OfficerDashboard from "./pages/OfficerDashboard";
 import DisplayScreen from "./pages/DisplayScreen";
 import PublicFeedbackSubmit from "./pages/PublicFeedbackSubmit";
@@ -31,8 +30,9 @@ function App() {
             path="/"
             element={<Navigate to={localStorage.getItem('registered_temple') ? '/submit-feedback' : '/setup-temple'} replace />}
           />
-          <Route path="/login" element={<AdminLogin />} />
-          <Route path="/officer/login" element={<OfficerLogin />} />
+          <Route path="/login" element={<Login />} />
+          {/* Old officer bookmarks land on the shared login */}
+          <Route path="/officer/login" element={<Navigate to="/login" replace />} />
           
           {/* Temple Setup (Tablet Registration) */}
           <Route path="/setup-temple" element={<TempleSetup />} />

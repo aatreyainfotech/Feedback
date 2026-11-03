@@ -29,14 +29,14 @@ const OfficerLayout = () => {
     console.log('OfficerLayout auth check', { token, user, userRole });
 
     if (!token || !user || userRole !== 'officer') {
-      navigate('/officer/login');
+      navigate('/login');
     }
   }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    navigate('/officer/login');
+    navigate('/login');
   };
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
