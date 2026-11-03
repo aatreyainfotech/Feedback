@@ -17,9 +17,14 @@ import bcrypt
 import pyodbc
 import uuid
 import os
+import re
 import json
 import logging
 import time
+import asyncio
+import secrets
+import urllib.request
+import urllib.error
 import aiofiles
 from threading import Lock
 from urllib.parse import urlparse, unquote
@@ -73,6 +78,19 @@ ACTIVE_DB_TARGET: Optional[str] = None
 SECRET_KEY = os.environ.get('JWT_SECRET', 'temple_feedback_secret_key_2026')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+
+# WhatsApp Cloud API (Meta) for password reset OTPs
+WHATSAPP_ACCESS_TOKEN = os.environ.get('WHATSAPP_ACCESS_TOKEN', '')
+WHATSAPP_PHONE_NUMBER_ID = os.environ.get('WHATSAPP_PHONE_NUMBER_ID', '')
+WHATSAPP_COUNTRY_CODE = os.environ.get('WHATSAPP_COUNTRY_CODE', '91')
+WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v21.0')
+META_OTP_TEMPLATE_NAME = os.environ.get('META_OTP_TEMPLATE_NAME', 'sri_otp')
+META_OTP_TEMPLATE_LANG = os.environ.get('META_OTP_TEMPLATE_LANG', 'en_US')
+META_OTP_TEMPLATE_HAS_BUTTON = os.environ.get('META_OTP_TEMPLATE_HAS_BUTTON', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
+OTP_TTL_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_SECONDS = 60
+OTP_MAX_PER_HOUR = 5
 
 # Password hashing
 # Use direct bcrypt; enforce 72-byte truncation for algorithm compatibility.
@@ -860,10 +878,19 @@ ALL_ADMIN_PERMISSIONS = [
     "administration",
 ]
 
+class ForgotPasswordRequest(BaseModel):
+    identifier: str  # email or mobile number
+
+class ResetPasswordRequest(BaseModel):
+    identifier: str
+    otp: str
+    new_password: str = Field(min_length=6)
+
 class AdminCreate(BaseModel):
     username: str
     email: str
     password: str
+    mobile: Optional[str] = None
     role: Optional[str] = "admin"  # 'admin' or 'superadmin'
     permissions: Optional[List[str]] = None
 
@@ -871,6 +898,7 @@ class AdminUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
+    mobile: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[List[str]] = None
 
@@ -890,6 +918,7 @@ class OfficerCreate(BaseModel):
     name: str
     email: str
     password: str
+    mobile: Optional[str] = None
     temple_id: Optional[str] = None
     role: Optional[str] = "officer"
     permissions: Optional[List[str]] = ["view_feedback", "update_status"]
@@ -898,6 +927,7 @@ class OfficerUpdate(BaseModel):
     name: str
     email: str
     password: Optional[str] = None
+    mobile: Optional[str] = None
     temple_id: Optional[str] = None
     role: Optional[str] = "officer"
     permissions: Optional[List[str]] = ["view_feedback", "update_status"]
@@ -966,6 +996,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def normalize_mobile(value: Optional[str]) -> Optional[str]:
+    """Store mobiles as 10 local digits; the country code is added when sending WhatsApp."""
+    digits = re.sub(r'\D', '', value or '')
+    if not digits:
+        return None
+    if len(digits) == 10 + len(WHATSAPP_COUNTRY_CODE) and digits.startswith(WHATSAPP_COUNTRY_CODE):
+        digits = digits[len(WHATSAPP_COUNTRY_CODE):]
+    if len(digits) != 10:
+        raise HTTPException(status_code=400, detail="Mobile number must be 10 digits")
+    return digits
 
 def generate_complaint_id():
     """Generate a unique complaint ID without scanning the feedback table."""
@@ -1114,6 +1155,185 @@ async def officer_login(user_data: UserLogin):
     }
 
 # =====================================================
+# FORGOT PASSWORD (WhatsApp OTP)
+# =====================================================
+
+PASSWORD_RESET_GENERIC_MESSAGE = (
+    "If this account has a mobile number, an OTP has been sent to it on WhatsApp."
+)
+
+
+def ensure_account_schema():
+    """Add mobile numbers to admins and officers and create the OTP table, tolerating worker races."""
+    statements = [
+        """
+        IF COL_LENGTH('users', 'mobile') IS NULL
+        BEGIN
+            ALTER TABLE users ADD mobile NVARCHAR(20) NULL;
+        END
+        """,
+        """
+        IF COL_LENGTH('officers', 'mobile') IS NULL
+        BEGIN
+            ALTER TABLE officers ADD mobile NVARCHAR(20) NULL;
+        END
+        """,
+        """
+        IF OBJECT_ID('password_reset_otps', 'U') IS NULL
+        BEGIN
+            CREATE TABLE password_reset_otps (
+                id NVARCHAR(36) NOT NULL PRIMARY KEY,
+                account_type NVARCHAR(10) NOT NULL,
+                account_id NVARCHAR(36) NOT NULL,
+                otp_hash NVARCHAR(100) NOT NULL,
+                attempts INT NOT NULL DEFAULT 0,
+                used BIT NOT NULL DEFAULT 0,
+                expires_at DATETIME2 NOT NULL,
+                created_at DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+            );
+            CREATE INDEX IX_password_reset_otps_account ON password_reset_otps (account_type, account_id, created_at DESC);
+        END
+        """,
+    ]
+    for query in statements:
+        try:
+            execute_query(query)
+        except HTTPException as exc:
+            if any(code in str(exc.detail) for code in ('2714', '2627', '2705', '1913')):
+                logger.info('Account schema already created by another worker')
+            else:
+                logger.error('Account schema setup failed: %s', exc.detail)
+
+
+def find_account_for_reset(identifier: str) -> Optional[dict]:
+    """Find an admin first, then an officer, by email or mobile (same order as login)."""
+    identifier = (identifier or '').strip()
+    if not identifier:
+        return None
+    if '@' in identifier:
+        column, value = 'email', identifier
+    else:
+        column, value = 'mobile', normalize_mobile(identifier)
+    for account_type, table in (('admin', 'users'), ('officer', 'officers')):
+        row = execute_query(
+            f"SELECT TOP 1 id, mobile FROM {table} WHERE {column} = ? ORDER BY created_at ASC",
+            (value,),
+            fetch_one=True,
+        )
+        if row:
+            return {"type": account_type, "table": table, "id": str(row['id']), "mobile": row.get('mobile')}
+    return None
+
+
+def send_whatsapp_otp(mobile: str, otp: str) -> None:
+    """Send the OTP with the approved Meta authentication template."""
+    components = [{"type": "body", "parameters": [{"type": "text", "text": otp}]}]
+    if META_OTP_TEMPLATE_HAS_BUTTON:
+        # Authentication templates with a copy-code button need the code repeated on the button.
+        components.append({
+            "type": "button",
+            "sub_type": "url",
+            "index": "0",
+            "parameters": [{"type": "text", "text": otp}],
+        })
+    body = json.dumps({
+        "messaging_product": "whatsapp",
+        "to": f"{WHATSAPP_COUNTRY_CODE}{mobile}",
+        "type": "template",
+        "template": {
+            "name": META_OTP_TEMPLATE_NAME,
+            "language": {"code": META_OTP_TEMPLATE_LANG},
+            "components": components,
+        },
+    }).encode('utf-8')
+    request = urllib.request.Request(
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages",
+        data=body,
+        headers={"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        logger.error('WhatsApp OTP send failed (%s): %s', exc.code, exc.read().decode('utf-8', errors='replace'))
+        raise
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest):
+    """Send a password reset OTP on WhatsApp to the account's mobile number."""
+    if not (WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID):
+        raise HTTPException(status_code=503, detail="WhatsApp OTP is not configured on the server")
+
+    account = find_account_for_reset(payload.identifier)
+    # The same reply whether or not the account exists, so the form cannot be used to discover accounts.
+    if not account or not account['mobile']:
+        return {"message": PASSWORD_RESET_GENERIC_MESSAGE}
+
+    recent = execute_query(
+        """SELECT COUNT(*) AS sent_last_hour,
+                  SUM(CASE WHEN created_at > DATEADD(second, ?, GETUTCDATE()) THEN 1 ELSE 0 END) AS sent_last_minute
+           FROM password_reset_otps
+           WHERE account_type = ? AND account_id = ? AND created_at > DATEADD(hour, -1, GETUTCDATE())""",
+        (-OTP_RESEND_SECONDS, account['type'], account['id']),
+        fetch_one=True,
+    ) or {}
+    if (recent.get('sent_last_minute') or 0) > 0:
+        raise HTTPException(status_code=429, detail="Please wait a minute before requesting another OTP")
+    if (recent.get('sent_last_hour') or 0) >= OTP_MAX_PER_HOUR:
+        raise HTTPException(status_code=429, detail="Too many OTP requests. Try again in an hour")
+
+    otp = f"{secrets.randbelow(1000000):06d}"
+    otp_id = str(uuid.uuid4())
+    execute_query(
+        """INSERT INTO password_reset_otps (id, account_type, account_id, otp_hash, expires_at)
+           VALUES (?, ?, ?, ?, DATEADD(minute, ?, GETUTCDATE()))""",
+        (otp_id, account['type'], account['id'], hash_password(otp), OTP_TTL_MINUTES),
+    )
+    try:
+        await asyncio.to_thread(send_whatsapp_otp, account['mobile'], otp)
+    except Exception as exc:
+        logger.error('WhatsApp OTP send error: %s', exc)
+        execute_query("DELETE FROM password_reset_otps WHERE id = ?", (otp_id,))
+        raise HTTPException(status_code=502, detail="Could not send the WhatsApp OTP. Please try again later")
+
+    return {"message": PASSWORD_RESET_GENERIC_MESSAGE}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password_with_otp(payload: ResetPasswordRequest):
+    """Set a new password after checking the WhatsApp OTP."""
+    invalid = HTTPException(status_code=400, detail="Invalid or expired OTP")
+    account = find_account_for_reset(payload.identifier)
+    if not account:
+        raise invalid
+
+    otp_row = execute_query(
+        """SELECT TOP 1 id, otp_hash, attempts FROM password_reset_otps
+           WHERE account_type = ? AND account_id = ? AND used = 0 AND expires_at > GETUTCDATE()
+           ORDER BY created_at DESC""",
+        (account['type'], account['id']),
+        fetch_one=True,
+    )
+    if not otp_row or otp_row['attempts'] >= OTP_MAX_ATTEMPTS:
+        raise invalid
+
+    if not verify_password(payload.otp.strip(), otp_row['otp_hash']):
+        execute_query("UPDATE password_reset_otps SET attempts = attempts + 1 WHERE id = ?", (otp_row['id'],))
+        raise invalid
+
+    execute_query(
+        f"UPDATE {account['table']} SET password = ?, updated_at = GETUTCDATE() WHERE id = ?",
+        (hash_password(payload.new_password), account['id']),
+    )
+    execute_query(
+        "UPDATE password_reset_otps SET used = 1 WHERE account_type = ? AND account_id = ?",
+        (account['type'], account['id']),
+    )
+    return {"message": "Password changed. You can now log in."}
+
+# =====================================================
 # SUPER ADMIN ENDPOINTS (manage admins & sidebar perms)
 # =====================================================
 
@@ -1130,6 +1350,7 @@ def _serialize_admin(row: dict) -> dict:
         "id": str(row['id']),
         "username": row.get('username'),
         "email": row.get('email'),
+        "mobile": row.get('mobile'),
         "role": role,
         "permissions": perms,
         "created_at": row['created_at'].isoformat() if row.get('created_at') else None,
@@ -1140,7 +1361,7 @@ def _serialize_admin(row: dict) -> dict:
 async def list_admins(current_superadmin = Depends(get_current_superadmin)):
     """List all admin / super admin users (Super Admin only)."""
     rows = execute_query(
-        "SELECT id, username, email, role, permissions, created_at FROM users ORDER BY created_at DESC",
+        "SELECT id, username, email, mobile, role, permissions, created_at FROM users ORDER BY created_at DESC",
         fetch_all=True,
     ) or []
     return [_serialize_admin(r) for r in rows]
@@ -1165,13 +1386,14 @@ async def create_admin(payload: AdminCreate, current_superadmin = Depends(get_cu
     if role == "superadmin":
         perms = ALL_ADMIN_PERMISSIONS
 
+    mobile = normalize_mobile(payload.mobile)
     new_id = str(uuid.uuid4())
     execute_query(
-        """INSERT INTO users (id, username, email, password, role, permissions)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (new_id, payload.username, payload.email, hash_password(payload.password), role, json.dumps(perms))
+        """INSERT INTO users (id, username, email, mobile, password, role, permissions)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (new_id, payload.username, payload.email, mobile, hash_password(payload.password), role, json.dumps(perms))
     )
-    return {"id": new_id, "username": payload.username, "email": payload.email, "role": role, "permissions": perms}
+    return {"id": new_id, "username": payload.username, "email": payload.email, "mobile": mobile, "role": role, "permissions": perms}
 
 
 @app.put("/api/admins/{admin_id}")
@@ -1188,6 +1410,8 @@ async def update_admin(admin_id: str, payload: AdminUpdate, current_superadmin =
         fields.append("email = ?"); params.append(payload.email)
     if payload.password:
         fields.append("password = ?"); params.append(hash_password(payload.password))
+    if payload.mobile is not None:
+        fields.append("mobile = ?"); params.append(normalize_mobile(payload.mobile))
 
     new_role = payload.role if payload.role in ("admin", "superadmin") else None
     if new_role:
@@ -1415,7 +1639,7 @@ async def get_officers():
         return cached
 
     officers = execute_query(
-        "SELECT id, name, email, temple_id, temple_name, role, permissions, created_at FROM officers ORDER BY created_at DESC",
+        "SELECT id, name, email, mobile, temple_id, temple_name, role, permissions, created_at FROM officers ORDER BY created_at DESC",
         fetch_all=True,
     )
     response = [
@@ -1423,6 +1647,7 @@ async def get_officers():
             "id": str(o['id']),
             "name": o['name'],
             "email": o['email'],
+            "mobile": o['mobile'],
             "temple_id": str(o['temple_id']) if o['temple_id'] else None,
             "temple_name": o['temple_name'],
             "role": o['role'] or 'officer',
@@ -1453,20 +1678,22 @@ async def create_officer(officer: OfficerCreate, current_admin = Depends(get_cur
         if temple:
             temple_name = temple['name']
     
+    mobile = normalize_mobile(officer.mobile)
     officer_id = str(uuid.uuid4())
     hashed_pw = hash_password(officer.password)
     permissions_json = json.dumps(officer.permissions or ['view_feedback', 'update_status'])
-    
+
     execute_query(
-        """INSERT INTO officers (id, name, email, password, temple_id, temple_name, role, permissions)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (officer_id, officer.name, officer.email, hashed_pw, officer.temple_id, temple_name, officer.role or 'officer', permissions_json)
+        """INSERT INTO officers (id, name, email, mobile, password, temple_id, temple_name, role, permissions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (officer_id, officer.name, officer.email, mobile, hashed_pw, officer.temple_id, temple_name, officer.role or 'officer', permissions_json)
     )
-    
+
     return {
         "id": officer_id,
         "name": officer.name,
         "email": officer.email,
+        "mobile": mobile,
         "temple_name": temple_name,
         "role": officer.role,
         "message": "Officer created successfully"
@@ -1502,27 +1729,29 @@ async def update_officer(officer_id: str, officer: OfficerUpdate, current_admin 
             temple_name = temple['name']
 
     permissions_json = json.dumps(officer.permissions or ['view_feedback', 'update_status'])
+    mobile = normalize_mobile(officer.mobile)
 
     if officer.password:
         hashed_pw = hash_password(officer.password)
         execute_query(
             """UPDATE officers
-               SET name = ?, email = ?, password = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
+               SET name = ?, email = ?, mobile = ?, password = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
                WHERE id = ?""",
-            (officer.name, officer.email, hashed_pw, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
+            (officer.name, officer.email, mobile, hashed_pw, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
         )
     else:
         execute_query(
             """UPDATE officers
-               SET name = ?, email = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
+               SET name = ?, email = ?, mobile = ?, temple_id = ?, temple_name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE()
                WHERE id = ?""",
-            (officer.name, officer.email, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
+            (officer.name, officer.email, mobile, officer.temple_id, temple_name, officer.role or 'officer', permissions_json, officer_id)
         )
 
     return {
         "id": officer_id,
         "name": officer.name,
         "email": officer.email,
+        "mobile": mobile,
         "temple_name": temple_name,
         "role": officer.role or 'officer',
         "message": "Officer updated successfully"
@@ -2591,6 +2820,7 @@ async def startup():
         )
 
         ensure_kiosk_schema()
+        ensure_account_schema()
 
         # Backfill: any existing admin without explicit permissions gets full access
         execute_query(

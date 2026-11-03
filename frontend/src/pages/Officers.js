@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 const defaultFormData = {
   name: '',
   email: '',
+  mobile: '',
   password: '',
   temple_id: '',
   role: 'officer',
@@ -76,6 +77,7 @@ const Officers = () => {
     setFormData({
       name: officer.name || '',
       email: officer.email || '',
+      mobile: officer.mobile || '',
       password: '',
       temple_id: officer.temple_id || '',
       role: officer.role || 'officer',
@@ -223,6 +225,23 @@ const Officers = () => {
                 />
               </div>
               <div>
+                <Label htmlFor="mobile" className="text-[#721C24]">Mobile (WhatsApp)</Label>
+                <Input
+                  id="mobile"
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]{10}"
+                  maxLength={10}
+                  title="10-digit mobile number"
+                  value={formData.mobile}
+                  onChange={(e) => setFormData({ ...formData, mobile: e.target.value.replace(/\D/g, '') })}
+                  data-testid="officer-mobile-input"
+                  placeholder="10-digit mobile number (for password reset OTP)"
+                  required
+                  className="mt-1.5"
+                />
+              </div>
+              <div>
                 <Label htmlFor="password" className="text-[#721C24]">
                   {editingOfficerId ? 'Password (leave blank to keep current password)' : 'Password'}
                 </Label>
@@ -359,6 +378,9 @@ const Officers = () => {
                 Email
               </TableHead>
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider">
+                Mobile
+              </TableHead>
+              <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider">
                 Temple
               </TableHead>
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider">
@@ -378,6 +400,7 @@ const Officers = () => {
               >
                 <TableCell className="font-medium">{officer.name}</TableCell>
                 <TableCell className="text-[#4A5568]">{officer.email}</TableCell>
+                <TableCell className="text-[#4A5568]">{officer.mobile || <span className="text-red-600">Not set</span>}</TableCell>
                 <TableCell className="text-[#4A5568]">{officer.temple_name || 'Not assigned'}</TableCell>
                 <TableCell>
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${

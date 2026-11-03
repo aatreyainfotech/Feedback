@@ -24,6 +24,7 @@ const PERMISSIONS = [
 const emptyForm = {
   username: '',
   email: '',
+  mobile: '',
   password: '',
   role: 'admin',
   permissions: ['dashboard'],
@@ -72,6 +73,7 @@ const SuperAdmin = () => {
     setForm({
       username: admin.username || '',
       email: admin.email || '',
+      mobile: admin.mobile || '',
       password: '',
       role: admin.role || 'admin',
       permissions: admin.role === 'superadmin' ? PERMISSIONS.map((p) => p.key) : (admin.permissions || []),
@@ -155,6 +157,22 @@ const SuperAdmin = () => {
                 />
               </div>
               <div>
+                <Label className="text-[#721C24]">Mobile (WhatsApp) *</Label>
+                <Input
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]{10}"
+                  maxLength={10}
+                  title="10-digit mobile number"
+                  placeholder="10-digit mobile number"
+                  value={form.mobile}
+                  onChange={(e) => setForm({ ...form, mobile: e.target.value.replace(/\D/g, '') })}
+                  required
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-[#4A5568] mt-1">Used to send the password reset OTP on WhatsApp.</p>
+              </div>
+              <div>
                 <Label className="text-[#721C24]">
                   {editing ? 'Password (leave blank to keep current)' : 'Password *'}
                 </Label>
@@ -216,6 +234,7 @@ const SuperAdmin = () => {
               <TableRow className="bg-[#FDFBF7] hover:bg-[#FDFBF7]">
                 <TableHead className="text-[#721C24] uppercase text-xs">Username</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Email</TableHead>
+                <TableHead className="text-[#721C24] uppercase text-xs">Mobile</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Role</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Permissions</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs text-right">Actions</TableHead>
@@ -226,6 +245,7 @@ const SuperAdmin = () => {
                 <TableRow key={a.id} className="hover:bg-[#FFF9E6]">
                   <TableCell className="font-medium">{a.username}</TableCell>
                   <TableCell className="text-[#4A5568]">{a.email}</TableCell>
+                  <TableCell className="text-[#4A5568]">{a.mobile || <span className="text-red-600">Not set</span>}</TableCell>
                   <TableCell>
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${a.role === 'superadmin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                       {a.role === 'superadmin' ? 'Super Admin' : 'Admin'}
