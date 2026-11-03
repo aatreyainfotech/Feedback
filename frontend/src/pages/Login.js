@@ -136,22 +136,9 @@ const Login = () => {
             </div>
 
             <div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-[#721C24] font-medium">
-                  Password
-                </Label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier(email);
-                    setMode('forgot');
-                  }}
-                  data-testid="forgot-password-link"
-                  className={linkClass}
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <Label htmlFor="password" className="text-[#721C24] font-medium">
+                Password
+              </Label>
               <Input
                 id="password"
                 type="password"
@@ -167,6 +154,20 @@ const Login = () => {
             <Button type="submit" disabled={loading} data-testid="login-button" className={submitClass}>
               {loading ? 'Logging in...' : 'Login'}
             </Button>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setIdentifier(email);
+                  setMode('forgot');
+                }}
+                data-testid="forgot-password-link"
+                className={linkClass}
+              >
+                Forgot password?
+              </button>
+            </div>
           </form>
         )}
 
