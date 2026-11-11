@@ -34,6 +34,9 @@ function App() {
           {/* Old officer bookmarks land on the shared login */}
           <Route path="/officer/login" element={<Navigate to="/login" replace />} />
           
+          {/* Temple QR code: devotees give feedback on their own phone, outside the kiosk */}
+          <Route path="/feedback/:templeId" element={<PublicFeedbackSubmit />} />
+
           {/* Temple Setup (Tablet Registration) */}
           <Route path="/setup-temple" element={<TempleSetup />} />
           

@@ -6,7 +6,8 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Plus, Trash2, Edit, Upload } from 'lucide-react';
+import { Plus, Trash2, Edit, Upload, QrCode } from 'lucide-react';
+import TempleQrDialog from '../components/TempleQrDialog';
 import { toast } from 'sonner';
 
 const Temples = () => {
@@ -17,6 +18,7 @@ const Temples = () => {
   const [rowsPerPage] = useState(5);
   const [editingTemple, setEditingTemple] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [qrTemple, setQrTemple] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     location: '',
@@ -288,6 +290,17 @@ const Temples = () => {
                     <Button
                       variant="ghost"
                       size="sm"
+                      onClick={() => setQrTemple(temple)}
+                      data-testid={`qr-temple-${temple.id}`}
+                      title="Feedback QR code"
+                      className="text-[#721C24] hover:bg-[#721C24]/10"
+                    >
+                      <QrCode size={16} className="mr-1" />
+                      QR
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleEdit(temple)}
                       data-testid={`edit-temple-${temple.id}`}
                       className="text-[#721C24] hover:bg-[#721C24]/10"
@@ -345,6 +358,8 @@ const Temples = () => {
         </div>
 
       </div>
+
+      <TempleQrDialog temple={qrTemple} onClose={() => setQrTemple(null)} />
     </div>
   );
 };

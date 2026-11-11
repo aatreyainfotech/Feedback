@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api, { API } from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -14,6 +14,10 @@ import { useKioskBusy } from '../components/KioskLayout';
 
 const PublicFeedbackSubmit = () => {
   const navigate = useNavigate();
+  // Set when a devotee opens the page from a temple's QR code on their own phone.
+  const { templeId } = useParams();
+  const isQrVisit = Boolean(templeId);
+  const [qrTempleMissing, setQrTempleMissing] = useState(false);
   const [temples, setTemples] = useState([]);
   const [registeredTemple, setRegisteredTemple] = useState(null);
   const [formData, setFormData] = useState({
@@ -94,7 +98,20 @@ const PublicFeedbackSubmit = () => {
 
   useEffect(() => {
     const registered = localStorage.getItem('registered_temple');
-    if (registered) {
+    if (isQrVisit) {
+      // The QR temple is kept in state only, so a devotee's phone never becomes a registered kiosk.
+      api.get('/temples')
+        .then((response) => {
+          const temple = response.data.find((t) => String(t.id).toLowerCase() === templeId.toLowerCase());
+          if (temple) {
+            setRegisteredTemple(temple);
+            setFormData((prev) => ({ ...prev, temple_id: temple.id }));
+          } else {
+            setQrTempleMissing(true);
+          }
+        })
+        .catch(() => toast.error('Failed to load temple details. Please check your internet and scan again.'));
+    } else if (registered) {
       const templeData = JSON.parse(registered);
       setRegisteredTemple(templeData);
       setFormData(prev => ({ ...prev, temple_id: templeData.id }));
@@ -103,7 +120,7 @@ const PublicFeedbackSubmit = () => {
       return undefined;
     }
     
-    fetchTemples();
+    if (!isQrVisit) fetchTemples();
     fetchServices();
     return () => {
       stopRecording();
@@ -111,7 +128,7 @@ const PublicFeedbackSubmit = () => {
         videoStreamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [navigate, stopRecording]);
+  }, [navigate, stopRecording, isQrVisit, templeId]);
 
   const startFaceDetection = async () => {
     if (!videoPreviewRef.current) return;
@@ -380,10 +397,12 @@ if (blob.size === 0) {
       setComplaintId(feedbackResponse.data.complaint_id);
       setSubmissionSuccess(true);
       
-      // After 1 second, show the simple success screen
-      setTimeout(() => {
-        setShowSimpleSuccess(true);
-      }, 1000);
+      // Kiosks move on to the simple screen after 1 second; a devotee's phone keeps the ID on screen.
+      if (!isQrVisit) {
+        setTimeout(() => {
+          setShowSimpleSuccess(true);
+        }, 1000);
+      }
       
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to submit feedback');
@@ -391,6 +410,23 @@ if (blob.size === 0) {
       setSubmitting(false);
     }
   };
+
+  if (qrTempleMissing) {
+    return (
+      <div className="min-h-screen flex flex-col bg-[#FDFBF7]">
+        <Header logo="/ts-logo.png" />
+        <div className="flex-1 flex items-center justify-center px-4 py-16">
+          <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8 text-center">
+            <h1 className="text-2xl font-bold text-[#721C24] mb-3">QR code not valid</h1>
+            <p className="text-[#4A5568]">
+              This temple is no longer listed. Please scan the QR code displayed at the temple, or ask the temple staff for help.
+            </p>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   // Show success screen after submission
   if (submissionSuccess) {
@@ -461,21 +497,21 @@ if (blob.size === 0) {
         >
           <div className="absolute inset-0 bg-black/50"></div>
         
-        <div className="relative z-10 bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl p-12 max-w-2xl w-full mx-4 text-center">
+        <div className="relative z-10 bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl p-6 sm:p-12 max-w-2xl w-full mx-4 my-6 text-center">
           {/* Success Icon */}
           <div className="mb-6">
-            <div className="w-32 h-32 bg-green-100 rounded-full mx-auto flex items-center justify-center">
-              <svg className="w-20 h-20 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-20 h-20 sm:w-32 sm:h-32 bg-green-100 rounded-full mx-auto flex items-center justify-center">
+              <svg className="w-12 h-12 sm:w-20 sm:h-20 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             </div>
           </div>
 
           {/* Success Message */}
-          <h1 className="text-4xl font-bold text-[#721C24] mb-4">
+          <h1 className="text-3xl sm:text-4xl font-bold text-[#721C24] mb-4">
             Successfully Submitted!
           </h1>
-          <p className="text-2xl text-[#4A5568] mb-8">
+          <p className="text-xl sm:text-2xl text-[#4A5568] mb-6 sm:mb-8">
             Thank you for visiting
           </p>
 
@@ -501,22 +537,24 @@ if (blob.size === 0) {
           </div>
 
           {/* Transaction ID */}
-          <div className="bg-[#721C24] text-white p-8 rounded-2xl mb-8">
+          <div className="bg-[#721C24] text-white p-6 sm:p-8 rounded-2xl mb-8">
             <p className="text-lg mb-2">Your Transaction ID</p>
-            <p className="text-5xl font-bold tracking-wider" data-testid="transaction-id">
+            <p className="text-3xl sm:text-5xl font-bold tracking-wider break-all" data-testid="transaction-id">
               {complaintId}
             </p>
           </div>
 
           {/* Action Buttons */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Button
-              onClick={handleBackToDisplay}
-              data-testid="back-to-display-button"
-              className="h-16 bg-[#F4C430] hover:bg-[#D4A825] text-[#721C24] text-lg font-semibold"
-            >
-              Back to Display
-            </Button>
+          <div className={`grid grid-cols-1 gap-4 ${isQrVisit ? '' : 'md:grid-cols-2'}`}>
+            {!isQrVisit && (
+              <Button
+                onClick={handleBackToDisplay}
+                data-testid="back-to-display-button"
+                className="h-16 bg-[#F4C430] hover:bg-[#D4A825] text-[#721C24] text-lg font-semibold"
+              >
+                Back to Display
+              </Button>
+            )}
             <Button
               onClick={clearForm}
               data-testid="clear-feedback-button"
