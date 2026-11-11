@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Users, Shield, Key, Edit2, Trash2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { roleColorClass, useOfficerRoles } from '../utils/officerRoles';
+import { isSuperAdminUser } from '../components/TempleQrDialog';
 
 const Administration = () => {
   const [officers, setOfficers] = useState([]);
@@ -30,6 +31,8 @@ const Administration = () => {
 
   // Roles come from Super Admin > Officer Roles.
   const { roles: loadedRoles } = useOfficerRoles();
+  // Role & Permission Management: only the Super Admin adds, edits or deletes; others can only view.
+  const canManage = isSuperAdminUser();
   const roleOptions = loadedRoles.map((r) => ({ ...r, color: roleColorClass(r.color) }));
 
   const permissionOptions = [
@@ -110,14 +113,15 @@ const Administration = () => {
   const handleUpdateRole = async () => {
     try {
       await api.put(`/officers/${selectedOfficer.id}/role`, {
+        name: selectedOfficer.name,
         role: selectedOfficer.role,
         permissions: selectedOfficer.permissions,
       });
-      toast.success('Role and permissions updated successfully');
+      toast.success('Officer updated successfully');
       setEditOpen(false);
       fetchOfficers();
     } catch (error) {
-      toast.error('Failed to update role');
+      toast.error(error.response?.data?.detail || 'Failed to update officer');
     }
   };
 
@@ -150,6 +154,7 @@ const Administration = () => {
           <p className="text-[#4A5568]">Manage roles, permissions, and system settings</p>
         </div>
         
+        {canManage && (
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
             <Button className="bg-[#721C24] hover:bg-[#5A161C] text-white">
@@ -260,6 +265,7 @@ const Administration = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -367,6 +373,7 @@ const Administration = () => {
                   </div>
                 </TableCell>
                 <TableCell className="text-right">
+                  {canManage ? (
                   <div className="flex items-center justify-end gap-2">
                     <Button
                       variant="ghost"
@@ -386,6 +393,9 @@ const Administration = () => {
                       <Trash2 size={16} />
                     </Button>
                   </div>
+                  ) : (
+                    <span className="text-xs text-[#4A5568]">View only</span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
@@ -427,14 +437,26 @@ const Administration = () => {
         </div>
       </div>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={canManage && editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="bg-white max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-[#721C24] text-2xl">Edit Officer Permissions</DialogTitle>
+            <DialogTitle className="text-[#721C24] text-2xl">Edit Officer</DialogTitle>
           </DialogHeader>
 
           {selectedOfficer && (
             <div className="space-y-4">
+              <div>
+                <Label htmlFor="edit-officer-name" className="text-[#721C24] font-medium">Officer Name</Label>
+                <Input
+                  id="edit-officer-name"
+                  data-testid="edit-officer-name"
+                  value={selectedOfficer.name || ''}
+                  onChange={(e) => setSelectedOfficer({ ...selectedOfficer, name: e.target.value })}
+                  maxLength={100}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-[#4A5568] mt-1">{selectedOfficer.email}</p>
+              </div>
               <div>
                 <Label className="text-[#721C24] font-medium">Role</Label>
                 <Select

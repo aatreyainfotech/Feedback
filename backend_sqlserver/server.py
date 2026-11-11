@@ -942,6 +942,7 @@ class OfficerPasswordReset(BaseModel):
 class OfficerRoleUpdate(BaseModel):
     role: str
     permissions: List[str]
+    name: Optional[str] = None  # Role & Permission Management also edits the officer's name
 
 class FeedbackCreate(BaseModel):
     temple_id: str
@@ -1872,6 +1873,10 @@ async def create_officer(officer: OfficerCreate, current_admin = Depends(get_cur
     scope = _admin_temple_id(current_admin.get('id')) if current_admin.get('role') == 'admin' else None
     if scope:
         officer.temple_id = scope  # a temple admin adds officers only for their temple
+    if current_admin.get('role') != 'superadmin':
+        # Only the Super Admin gives roles and permissions; others add officers with the defaults.
+        officer.role = 'officer'
+        officer.permissions = ['view_feedback', 'update_status']
 
     # Get temple name
     temple_name = None
@@ -1934,6 +1939,15 @@ async def update_officer(officer_id: str, officer: OfficerUpdate, current_admin 
         if temple:
             temple_name = temple['name']
 
+    if current_admin.get('role') != 'superadmin':
+        # Roles and permissions are changed only by the Super Admin; keep the officer's current ones.
+        current = execute_query("SELECT role, permissions FROM officers WHERE id = ?", (officer_id,), fetch_one=True) or {}
+        officer.role = current.get('role') or 'officer'
+        try:
+            officer.permissions = json.loads(current['permissions']) if current.get('permissions') else None
+        except Exception:
+            officer.permissions = None
+
     permissions_json = json.dumps(officer.permissions or ['view_feedback', 'update_status'])
     mobile = normalize_mobile(officer.mobile)
 
@@ -1983,15 +1997,27 @@ async def reset_officer_password(officer_id: str, payload: OfficerPasswordReset,
     return {"message": "Password reset successfully"}
 
 @app.put("/api/officers/{officer_id}/role")
-async def update_officer_role(officer_id: str, role_update: OfficerRoleUpdate, current_admin = Depends(get_current_admin)):
-    """Update officer role and permissions"""
+async def update_officer_role(officer_id: str, role_update: OfficerRoleUpdate, current_superadmin = Depends(get_current_superadmin)):
+    """Update an officer's name, role and permissions (Super Admin only)"""
+    existing = execute_query("SELECT id FROM officers WHERE id = ?", (officer_id,), fetch_one=True)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Officer not found")
     permissions_json = json.dumps(role_update.permissions)
-    
-    execute_query(
-        "UPDATE officers SET role = ?, permissions = ?, updated_at = GETUTCDATE() WHERE id = ?",
-        (role_update.role, permissions_json, officer_id)
-    )
-    
+    name = re.sub(r'\s+', ' ', role_update.name or '').strip() if role_update.name is not None else None
+    if role_update.name is not None and not name:
+        raise HTTPException(status_code=400, detail="Enter the officer name")
+
+    if name:
+        execute_query(
+            "UPDATE officers SET name = ?, role = ?, permissions = ?, updated_at = GETUTCDATE() WHERE id = ?",
+            (name, role_update.role, permissions_json, officer_id)
+        )
+    else:
+        execute_query(
+            "UPDATE officers SET role = ?, permissions = ?, updated_at = GETUTCDATE() WHERE id = ?",
+            (role_update.role, permissions_json, officer_id)
+        )
+
     return {"message": "Role updated successfully"}
 
 @app.delete("/api/officers/{officer_id}")

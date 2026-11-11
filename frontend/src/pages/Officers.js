@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { roleAccessLabel, roleColorClass, findRole, roleLabel, useOfficerRoles } from '../utils/officerRoles';
+import { isSuperAdminUser } from '../components/TempleQrDialog';
 
 const defaultFormData = {
   name: '',
@@ -35,6 +36,8 @@ const Officers = () => {
 
   // Roles come from Super Admin > Officer Roles.
   const { roles: roleOptions } = useOfficerRoles();
+  // Roles and permissions are given only by the Super Admin (the server enforces it too).
+  const canSetRole = isSuperAdminUser();
 
   const permissionOptions = [
     { value: 'view_feedback', label: 'View Feedback' },
@@ -271,6 +274,8 @@ const Officers = () => {
                   </SelectContent>
                 </Select>
               </div>
+              {canSetRole ? (
+              <>
               <div>
                 <Label htmlFor="role" className="text-[#721C24]">Role</Label>
                 <Select
@@ -314,6 +319,12 @@ const Officers = () => {
                   ))}
                 </div>
               </div>
+              </>
+              ) : (
+                <p className="text-sm text-[#4A5568] bg-[#FFF9E6] rounded-lg p-3">
+                  Role: <span className="font-semibold text-[#721C24]">{roleLabel(roleOptions, formData.role)}</span>. Roles and permissions are set by the Super Admin.
+                </p>
+              )}
               <Button
                 type="submit"
                 data-testid="submit-officer-button"
