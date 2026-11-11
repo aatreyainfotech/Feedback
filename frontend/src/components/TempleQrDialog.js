@@ -21,14 +21,24 @@ export const isSuperAdminUser = () => {
   }
 };
 
-const loadLogo = (temple) => new Promise((resolve) => {
-  if (!temple?.logo_path) return resolve(null);
-  const img = new Image();
-  img.crossOrigin = 'anonymous'; // the API sends Access-Control-Allow-Origin, so the PNG can still be saved
-  img.onload = () => resolve(img);
-  img.onerror = () => resolve(null); // no logo: plain QR code
-  img.src = `${API}/files/${temple.logo_path}`;
-});
+// The logo is fetched fresh (not from the browser cache): the Temples page shows the same file without CORS,
+// and that cached copy would block drawing it on the canvas. A blob URL keeps the PNG downloadable.
+const loadLogo = async (temple) => {
+  if (!temple?.logo_path) return null;
+  try {
+    const res = await fetch(`${API}/files/${temple.logo_path}`, { mode: 'cors', cache: 'no-store' });
+    if (!res.ok) return null;
+    const blobUrl = URL.createObjectURL(await res.blob());
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(blobUrl); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(blobUrl); resolve(null); }; // no logo: plain QR code
+      img.src = blobUrl;
+    });
+  } catch {
+    return null;
+  }
+};
 
 // The QR code with the temple logo in the centre. Level H keeps it readable with the centre covered.
 export const renderTempleQr = async (temple, size) => {
