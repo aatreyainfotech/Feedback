@@ -590,18 +590,18 @@ if (blob.size === 0) {
           <h1 className="text-3xl sm:text-5xl font-bold text-[#F4C430] mb-2">Create Feedback</h1>
           <p className="text-base sm:text-xl text-white/90">Share your temple experience with us</p>
           {registeredTemple && (
-            <div className="mt-6 inline-block bg-white/95 px-8 py-6 rounded-2xl shadow-2xl border-2 border-[#F4C430]">
-              <div className="flex items-center gap-4">
+            <div className="mt-4 sm:mt-6 inline-block max-w-full bg-white/95 px-4 py-3 sm:px-8 sm:py-6 rounded-2xl shadow-2xl border-2 border-[#F4C430]">
+              <div className="flex items-center gap-3 sm:gap-4">
                 {registeredTemple.logo_path && (
                   <img 
                     src={`${API}/files/${registeredTemple.logo_path}`}
                     alt={`${registeredTemple.name} logo`}
-                    className="w-20 h-20 object-contain rounded-lg border-2 border-[#721C24] shadow-md"
+                    className="w-14 h-14 sm:w-20 sm:h-20 shrink-0 object-contain rounded-lg border-2 border-[#721C24] shadow-md"
                   />
                 )}
                 <div className="text-left">
-                  <p className="text-3xl font-bold text-[#721C24]">{registeredTemple.name}</p>
-                  <p className="text-lg text-[#4A5568] mt-1">{registeredTemple.location}</p>
+                  <p className="text-lg leading-snug sm:text-3xl font-bold text-[#721C24]">{registeredTemple.name}</p>
+                  <p className="text-sm sm:text-lg text-[#4A5568] mt-1">{registeredTemple.location}</p>
                 </div>
               </div>
             </div>

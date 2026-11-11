@@ -43,11 +43,11 @@ const OfficerLayout = () => {
 
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-b from-[#721C24] to-[#4A1016]">
-      <Header logo="/ts-logo.png" />
+      <Header logo="/ts-logo.png" menuSpace />
 
       {/* Mobile hamburger button */}
       <button
-        className="md:hidden fixed top-4 left-4 z-50 bg-[#721C24] text-white p-2 rounded-lg shadow-lg"
+        className="md:hidden fixed top-4 right-4 z-50 bg-[#721C24] text-white p-2 rounded-lg shadow-lg"
         onClick={() => setSidebarOpen(!sidebarOpen)}
         aria-label="Toggle menu"
       >

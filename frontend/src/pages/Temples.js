@@ -256,7 +256,7 @@ const Temples = () => {
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider">
                 Temple Name
               </TableHead>
-              <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider">
+              <TableHead className="hidden sm:table-cell text-[#721C24] font-semibold uppercase text-xs tracking-wider">
                 Location
               </TableHead>
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider text-right">
@@ -284,8 +284,8 @@ const Temples = () => {
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="font-medium">{temple.name}</TableCell>
-                <TableCell className="text-[#4A5568]">{temple.location}</TableCell>
+                <TableCell className="font-medium">{temple.name}<span className="block sm:hidden text-xs font-normal text-[#4A5568] mt-0.5">{temple.location}</span></TableCell>
+                <TableCell className="hidden sm:table-cell text-[#4A5568]">{temple.location}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     {canQr && (
@@ -297,8 +297,8 @@ const Temples = () => {
                       title="Feedback QR code"
                       className="text-[#721C24] hover:bg-[#721C24]/10"
                     >
-                      <QrCode size={16} className="mr-1" />
-                      QR
+                      <QrCode size={16} className="sm:mr-1" />
+                      <span className="hidden sm:inline">QR</span>
                     </Button>
                     )}
                     <Button

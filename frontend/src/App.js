@@ -21,15 +21,19 @@ import OfficerLayout from "./components/OfficerLayout";
 import KioskLayout from "./components/KioskLayout";
 import { Toaster } from "./components/ui/sonner";
 
+// The Android tablet app (Capacitor) serves its own copy of the site from https://localhost.
+const isTabletApp = () => Boolean(window.Capacitor?.isNativePlatform?.()) || window.location.hostname === 'localhost';
+
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
-          {/* After a reboot a registered tablet goes straight back to the kiosk */}
+          {/* After a reboot a registered tablet goes straight back to the kiosk. On the website
+              (https://fb.aatreya.org) an unregistered browser opens the login, not the tablet setup. */}
           <Route
             path="/"
-            element={<Navigate to={localStorage.getItem('registered_temple') ? '/submit-feedback' : '/setup-temple'} replace />}
+            element={<Navigate to={localStorage.getItem('registered_temple') ? '/submit-feedback' : (isTabletApp() ? '/setup-temple' : '/login')} replace />}
           />
           <Route path="/login" element={<Login />} />
           {/* Old officer bookmarks land on the shared login */}
