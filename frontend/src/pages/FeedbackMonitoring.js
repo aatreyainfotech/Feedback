@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button';
 import { Star, Play, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { roleLabel, useOfficerRoles } from '../utils/officerRoles';
 
 // Assign / Reassign EO / Officer: the Super Admin, or an admin the Super Admin gave "Assign EO / Officer".
 const canAssignOfficer = () => {
@@ -19,10 +20,10 @@ const canAssignOfficer = () => {
   }
 };
 
-const roleTag = (role) => (role === 'eo' ? 'EO' : role === 'supervisor' ? 'Supervisor' : 'Officer');
 
 const FeedbackMonitoring = () => {
   const canAssign = canAssignOfficer();
+  const { roles } = useOfficerRoles();
   const [feedback, setFeedback] = useState([]);
   const [temples, setTemples] = useState([]);
   const [officers, setOfficers] = useState([]);
@@ -457,7 +458,7 @@ const FeedbackMonitoring = () => {
                   <SelectContent className="bg-white">
                     {officers.map((officer) => (
                       <SelectItem key={officer.id} value={officer.id}>
-                        {officer.name} - {roleTag(officer.role)} {officer.temple_name ? `(${officer.temple_name})` : ''}
+                        {officer.name} - {roleLabel(roles, officer.role)} {officer.temple_name ? `(${officer.temple_name})` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>

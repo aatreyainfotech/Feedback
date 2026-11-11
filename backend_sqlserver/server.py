@@ -1229,6 +1229,26 @@ def ensure_account_schema():
         END
         """,
         """
+        IF OBJECT_ID('officer_roles', 'U') IS NULL
+        BEGIN
+            CREATE TABLE officer_roles (
+                role_key NVARCHAR(50) NOT NULL PRIMARY KEY,
+                label NVARCHAR(100) NOT NULL,
+                access NVARCHAR(20) NOT NULL DEFAULT 'assigned',
+                color NVARCHAR(20) NOT NULL DEFAULT 'green',
+                sort_order INT NOT NULL DEFAULT 100,
+                created_at DATETIME2 DEFAULT GETUTCDATE(),
+                updated_at DATETIME2 DEFAULT GETUTCDATE()
+            );
+            INSERT INTO officer_roles (role_key, label, access, color, sort_order) VALUES
+                ('officer', 'Officer', 'assigned', 'green', 10),
+                ('supervisor', 'Supervisor', 'temple', 'blue', 20),
+                ('eo', 'Executive Officer', 'temple', 'purple', 30),
+                ('asst_commissioner', 'Asst Commissioner', 'all', 'amber', 40),
+                ('commissioner', 'Commissioner', 'all', 'red', 50);
+        END
+        """,
+        """
         IF COL_LENGTH('officers', 'mobile') IS NULL
         BEGIN
             ALTER TABLE officers ADD mobile NVARCHAR(20) NULL;
@@ -1696,6 +1716,119 @@ async def register_tablet(data: RegisterTablet):
 # OFFICER ENDPOINTS
 # =====================================================
 
+# =====================================================
+# OFFICER ROLES (Super Admin adds / edits them)
+#   access: 'assigned' = only feedback assigned to the officer,
+#           'temple'   = all feedback of the officer's temple,
+#           'all'      = all temples
+# =====================================================
+
+BUILTIN_ROLE_ACCESS = {
+    'officer': 'assigned', 'supervisor': 'temple', 'eo': 'temple',
+    'asst_commissioner': 'all', 'commissioner': 'all',
+}
+ROLE_ACCESS_LEVELS = ('assigned', 'temple', 'all')
+ROLE_COLORS = ('green', 'blue', 'purple', 'amber', 'red', 'teal', 'pink', 'slate')
+
+
+class OfficerRoleIn(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    access: str = 'assigned'
+    color: Optional[str] = 'green'
+
+
+def _list_officer_roles():
+    cached = get_cached_response("officer-roles:list")
+    if cached is not None:
+        return cached
+    try:
+        rows = execute_query(
+            "SELECT role_key, label, access, color, sort_order FROM officer_roles ORDER BY sort_order, label",
+            fetch_all=True,
+        ) or []
+    except Exception:
+        rows = []
+    roles = [
+        {"value": r['role_key'], "label": r['label'], "access": r['access'], "color": r['color'], "sort_order": r['sort_order']}
+        for r in rows
+    ]
+    set_cached_response("officer-roles:list", roles, ttl=10)
+    return roles
+
+
+def role_access(role: Optional[str]) -> str:
+    """What an officer with this role sees (falls back to the built-in rules)."""
+    role = role or 'officer'
+    for r in _list_officer_roles():
+        if r['value'] == role:
+            return r['access'] if r['access'] in ROLE_ACCESS_LEVELS else 'assigned'
+    return BUILTIN_ROLE_ACCESS.get(role, 'assigned')
+
+
+def _clean_role_input(payload: OfficerRoleIn):
+    label = re.sub(r'\s+', ' ', payload.label or '').strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Enter the role name")
+    if payload.access not in ROLE_ACCESS_LEVELS:
+        raise HTTPException(status_code=400, detail="Choose what this role can see")
+    color = payload.color if payload.color in ROLE_COLORS else 'green'
+    return label, payload.access, color
+
+
+@app.get("/api/officer-roles")
+async def get_officer_roles():
+    """Officer roles for the role pickers (Officers, Administration, Super Admin)."""
+    return _list_officer_roles()
+
+
+@app.post("/api/officer-roles")
+async def create_officer_role(payload: OfficerRoleIn, current_superadmin = Depends(get_current_superadmin)):
+    """Add an officer role (Super Admin only)."""
+    label, access, color = _clean_role_input(payload)
+    key = re.sub(r'[^a-z0-9]+', '_', label.lower()).strip('_')[:50] or 'role'
+    existing = execute_query("SELECT role_key FROM officer_roles WHERE role_key = ? OR label = ?", (key, label), fetch_one=True)
+    if existing:
+        raise HTTPException(status_code=400, detail="A role with this name already exists")
+    order = execute_query("SELECT COALESCE(MAX(sort_order), 0) + 10 AS n FROM officer_roles", fetch_one=True)
+    execute_query(
+        "INSERT INTO officer_roles (role_key, label, access, color, sort_order) VALUES (?, ?, ?, ?, ?)",
+        (key, label, access, color, (order or {}).get('n', 100)),
+    )
+    clear_cached_responses()
+    return {"value": key, "label": label, "access": access, "color": color}
+
+
+@app.put("/api/officer-roles/{role_key}")
+async def update_officer_role_def(role_key: str, payload: OfficerRoleIn, current_superadmin = Depends(get_current_superadmin)):
+    """Edit an officer role's name, access or colour (Super Admin only). The key stays, so officers keep the role."""
+    label, access, color = _clean_role_input(payload)
+    row = execute_query("SELECT role_key FROM officer_roles WHERE role_key = ?", (role_key,), fetch_one=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Role not found")
+    clash = execute_query("SELECT role_key FROM officer_roles WHERE label = ? AND role_key <> ?", (label, role_key), fetch_one=True)
+    if clash:
+        raise HTTPException(status_code=400, detail="A role with this name already exists")
+    execute_query(
+        "UPDATE officer_roles SET label = ?, access = ?, color = ?, updated_at = GETUTCDATE() WHERE role_key = ?",
+        (label, access, color, role_key),
+    )
+    clear_cached_responses()
+    return {"value": role_key, "label": label, "access": access, "color": color}
+
+
+@app.delete("/api/officer-roles/{role_key}")
+async def delete_officer_role_def(role_key: str, current_superadmin = Depends(get_current_superadmin)):
+    """Remove an officer role no officer uses (Super Admin only). "Officer" is the default and stays."""
+    if role_key == 'officer':
+        raise HTTPException(status_code=400, detail="Officer is the default role and cannot be removed")
+    used = execute_query("SELECT COUNT(*) AS c FROM officers WHERE role = ?", (role_key,), fetch_one=True)
+    if used and used.get('c'):
+        raise HTTPException(status_code=400, detail=f"{used['c']} officer(s) have this role. Change their role first.")
+    execute_query("DELETE FROM officer_roles WHERE role_key = ?", (role_key,))
+    clear_cached_responses()
+    return {"message": "Role removed"}
+
+
 @app.get("/api/officers")
 async def get_officers(authorization: str = Header(None)):
     """Get all officers (an admin limited to one temple gets that temple's and the all-temple officers)."""
@@ -2005,10 +2138,11 @@ async def get_officer_feedback(current_officer = Depends(get_current_officer)):
     temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
     role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
 
-    if (not temple_id) or role in ('commissioner', 'asst_commissioner'):
+    access = role_access(role)
+    if (not temple_id) or access == 'all':
         return _query_feedback()
 
-    if role in ('supervisor', 'eo'):
+    if access == 'temple':
         return _query_feedback(temple_id=str(temple_id))
 
     officer_id = str(current_officer['id'])
@@ -2364,8 +2498,9 @@ async def get_officer_stats(current_officer = Depends(get_current_officer)):
     officer_id = str(current_officer['id'])
     temple_id = current_officer.get('temple_id') if isinstance(current_officer, dict) else None
     role = (current_officer.get('role') if isinstance(current_officer, dict) else None) or 'officer'
-    all_scope = (not temple_id) or role in ('commissioner', 'asst_commissioner')
-    temple_scope = (not all_scope) and role in ('supervisor', 'eo')
+    access = role_access(role)
+    all_scope = (not temple_id) or access == 'all'
+    temple_scope = (not all_scope) and access == 'temple'
 
     if all_scope:
         cache_key = "stats:officer:all"

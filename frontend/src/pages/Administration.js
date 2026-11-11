@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Users, Shield, Key, Edit2, Trash2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { roleColorClass, useOfficerRoles } from '../utils/officerRoles';
 
 const Administration = () => {
   const [officers, setOfficers] = useState([]);
@@ -27,13 +28,9 @@ const Administration = () => {
     permissions: ['view_feedback', 'update_status'],
   });
 
-  const roleOptions = [
-    { value: 'officer', label: 'Officer', color: 'bg-green-100 text-green-700' },
-    { value: 'supervisor', label: 'Supervisor', color: 'bg-blue-100 text-blue-700' },
-    { value: 'eo', label: 'Executive Officer', color: 'bg-purple-100 text-purple-700' },
-    { value: 'asst_commissioner', label: 'Asst Commissioner', color: 'bg-amber-100 text-amber-700' },
-    { value: 'commissioner', label: 'Commissioner', color: 'bg-red-100 text-red-700' },
-  ];
+  // Roles come from Super Admin > Officer Roles.
+  const { roles: loadedRoles } = useOfficerRoles();
+  const roleOptions = loadedRoles.map((r) => ({ ...r, color: roleColorClass(r.color) }));
 
   const permissionOptions = [
     { value: 'view_feedback', label: 'View Feedback', icon: '👁️' },
@@ -131,7 +128,7 @@ const Administration = () => {
 
   const getRoleLabel = (role) => {
     const found = roleOptions.find(r => r.value === role);
-    return found ? found.label : 'Officer';
+    return found ? found.label : (role ? String(role).replace(/_/g, ' ') : 'Officer');
   };
 
   const totalPages = Math.max(1, Math.ceil(officers.length / rowsPerPage));

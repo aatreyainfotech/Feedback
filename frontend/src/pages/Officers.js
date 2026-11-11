@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { roleAccessLabel, roleColorClass, findRole, roleLabel, useOfficerRoles } from '../utils/officerRoles';
 
 const defaultFormData = {
   name: '',
@@ -32,13 +33,8 @@ const Officers = () => {
   const [rowsPerPage] = useState(5);
   const [formData, setFormData] = useState(defaultFormData);
 
-  const roleOptions = [
-    { value: 'officer', label: 'Officer', description: 'Can view and update feedback status' },
-    { value: 'supervisor', label: 'Supervisor', description: 'Can manage officers and feedback' },
-    { value: 'eo', label: 'Executive Officer (EO)', description: 'Full access to temple operations' },
-    { value: 'asst_commissioner', label: 'Asst Commissioner', description: 'Regional oversight across temples' },
-    { value: 'commissioner', label: 'Commissioner', description: 'Top-level access across all temples' },
-  ];
+  // Roles come from Super Admin > Officer Roles.
+  const { roles: roleOptions } = useOfficerRoles();
 
   const permissionOptions = [
     { value: 'view_feedback', label: 'View Feedback' },
@@ -289,7 +285,7 @@ const Officers = () => {
                       <SelectItem key={role.value} value={role.value}>
                         <div>
                           <span className="font-medium">{role.label}</span>
-                          <span className="text-xs text-[#4A5568] ml-2">- {role.description}</span>
+                          <span className="text-xs text-[#4A5568] ml-2">- {roleAccessLabel(role.access)}</span>
                         </div>
                       </SelectItem>
                     ))}
@@ -403,13 +399,8 @@ const Officers = () => {
                 <TableCell className="text-[#4A5568]">{officer.mobile || <span className="text-red-600">Not set</span>}</TableCell>
                 <TableCell className="text-[#4A5568]">{officer.temple_name || 'Not assigned'}</TableCell>
                 <TableCell>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    officer.role === 'eo' ? 'bg-purple-100 text-purple-700' :
-                    officer.role === 'supervisor' ? 'bg-blue-100 text-blue-700' :
-                    'bg-green-100 text-green-700'
-                  }`}>
-                    {officer.role === 'eo' ? 'Executive Officer' : 
-                     officer.role === 'supervisor' ? 'Supervisor' : 'Officer'}
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${roleColorClass(findRole(roleOptions, officer.role)?.color)}`}>
+                    {roleLabel(roleOptions, officer.role)}
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
