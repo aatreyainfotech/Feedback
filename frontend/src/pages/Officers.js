@@ -410,7 +410,7 @@ const Officers = () => {
                 <TableCell className="text-[#4A5568]">{officer.mobile || <span className="text-red-600">Not set</span>}</TableCell>
                 <TableCell className="text-[#4A5568]">{officer.temple_name || 'Not assigned'}</TableCell>
                 <TableCell>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${roleColorClass(findRole(roleOptions, officer.role)?.color)}`}>
+                  <span className={`inline-block max-w-[15rem] text-center leading-snug px-3 py-1 rounded-2xl text-xs font-medium ${roleColorClass(findRole(roleOptions, officer.role)?.color)}`}>
                     {roleLabel(roleOptions, officer.role)}
                   </span>
                 </TableCell>

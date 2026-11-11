@@ -354,19 +354,19 @@ const Administration = () => {
                   {officer.temple_name || 'Not assigned'}
                 </TableCell>
                 <TableCell>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleColor(officer.role)}`}>
+                  <span className={`inline-block max-w-[15rem] text-center leading-snug px-3 py-1 rounded-2xl text-xs font-medium ${getRoleColor(officer.role)}`}>
                     {getRoleLabel(officer.role)}
                   </span>
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">
                     {(officer.permissions || ['view_feedback', 'update_status']).slice(0, 3).map((perm, idx) => (
-                      <span key={idx} className="px-2 py-0.5 bg-[#FFF9E6] text-[#721C24] rounded text-xs">
+                      <span key={idx} className="inline-block whitespace-nowrap px-2 py-0.5 bg-[#FFF9E6] text-[#721C24] rounded text-xs">
                         {permissionOptions.find(p => p.value === perm)?.label || perm}
                       </span>
                     ))}
                     {(officer.permissions || []).length > 3 && (
-                      <span className="px-2 py-0.5 bg-[#E2E8F0] text-[#4A5568] rounded text-xs">
+                      <span className="inline-block whitespace-nowrap px-2 py-0.5 bg-[#E2E8F0] text-[#4A5568] rounded text-xs">
                         +{officer.permissions.length - 3} more
                       </span>
                     )}

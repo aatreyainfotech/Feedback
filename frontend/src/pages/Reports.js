@@ -329,7 +329,7 @@ const Reports = () => {
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium">{item.rating}/5</span>
                 <span
-                  className={`px-3 py-1 rounded-full text-xs ${
+                  className={`inline-block whitespace-nowrap px-3 py-1 rounded-full text-xs ${
                     item.status === 'Resolved'
                       ? 'bg-[#E6F4EA] text-[#1E7E34]'
                       : item.status === 'Pending'

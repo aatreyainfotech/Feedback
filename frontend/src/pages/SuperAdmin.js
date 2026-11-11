@@ -296,7 +296,7 @@ const SuperAdmin = () => {
                   <TableCell className="text-[#4A5568]">{a.email}</TableCell>
                   <TableCell className="text-[#4A5568]">{a.mobile || <span className="text-red-600">Not set</span>}</TableCell>
                   <TableCell>
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${a.role === 'superadmin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                    <span className={`inline-block whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium ${a.role === 'superadmin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                       {a.role === 'superadmin' ? 'Super Admin' : 'Admin'}
                     </span>
                   </TableCell>
@@ -306,12 +306,12 @@ const SuperAdmin = () => {
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {(a.permissions || []).slice(0, 4).map((p) => (
-                        <span key={p} className="px-2 py-0.5 bg-[#FFF9E6] text-[#721C24] rounded text-xs">
+                        <span key={p} className="inline-block whitespace-nowrap px-2 py-0.5 bg-[#FFF9E6] text-[#721C24] rounded text-xs">
                           {ALL_PERMISSIONS.find((x) => x.key === p)?.label || p}
                         </span>
                       ))}
                       {(a.permissions || []).length > 4 && (
-                        <span className="px-2 py-0.5 bg-[#E2E8F0] text-[#4A5568] rounded text-xs">
+                        <span className="inline-block whitespace-nowrap px-2 py-0.5 bg-[#E2E8F0] text-[#4A5568] rounded text-xs">
                           +{a.permissions.length - 4} more
                         </span>
                       )}

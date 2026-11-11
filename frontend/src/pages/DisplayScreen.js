@@ -95,7 +95,7 @@ const DisplayScreen = () => {
                 <p className="text-lg text-[#4A5568] font-medium">{item.temple_name}</p>
               </div>
               <span
-                className={`px-4 py-2 rounded-full text-sm font-bold border-2 ${
+                className={`inline-block whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold border-2 ${
                   getStatusColor(item.status)
                 }`}
               >

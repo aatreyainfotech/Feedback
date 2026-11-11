@@ -104,7 +104,7 @@ const FeedbackMonitoring = () => {
       Rejected: 'bg-[#FDE8E8] text-[#C53030] border border-[#C53030]/20',
     };
     return (
-      <span className={`px-3 py-1 rounded-full text-xs font-medium ${styles[status] || ''}`}>
+      <span className={`inline-block whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium ${styles[status] || ''}`}>
         {status}
       </span>
     );

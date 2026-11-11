@@ -87,7 +87,7 @@ const OfficerRolesManager = () => {
             {roles.map((role) => (
               <TableRow key={role.value} data-testid={`officer-role-${role.value}`} className="hover:bg-[#FFF9E6]">
                 <TableCell>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${roleColorClass(role.color)}`}>{role.label}</span>
+                  <span className={`inline-block max-w-[15rem] text-center leading-snug px-3 py-1 rounded-2xl text-xs font-medium ${roleColorClass(role.color)}`}>{role.label}</span>
                 </TableCell>
                 <TableCell className="text-sm text-[#4A5568]">{roleAccessLabel(role.access)}</TableCell>
                 <TableCell className="text-right">
