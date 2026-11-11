@@ -2284,6 +2284,57 @@ async def create_feedback_with_video(
         "message": "Feedback submitted successfully"
     }
 
+@app.delete("/api/feedback/{feedback_id}")
+async def delete_feedback(feedback_id: str, current_superadmin = Depends(get_current_superadmin)):
+    """Delete a feedback completely (Super Admin only): the record, its WhatsApp log entries,
+    and its video (file on disk and the stored SQL copy) when no other feedback uses it."""
+    fb = execute_query(
+        "SELECT id, complaint_id, video_url, video_path FROM feedback WHERE id = ?",
+        (feedback_id,),
+        fetch_one=True,
+    )
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+
+    video_ref = fb.get('video_url') or fb.get('video_path')
+    video_rel = None
+    if video_ref:
+        try:
+            video_rel = normalize_upload_path(video_ref)
+        except HTTPException:
+            video_rel = None
+
+    execute_query("DELETE FROM whatsapp_logs WHERE feedback_id = ?", (feedback_id,))
+    execute_query("DELETE FROM feedback WHERE id = ?", (feedback_id,))
+
+    video_removed = False
+    if video_rel:
+        still_used = execute_query(
+            "SELECT COUNT(*) AS c FROM feedback WHERE video_url LIKE ? OR video_path LIKE ?",
+            (f"%{video_rel}", f"%{video_rel}"),
+            fetch_one=True,
+        )
+        if not (still_used or {}).get('c'):
+            try:
+                execute_query("DELETE FROM file_uploads WHERE file_path = ?", (video_rel,))
+            except HTTPException as exc:
+                logger.warning('Could not remove the stored video copy %s: %s', video_rel, exc.detail)
+            for root in UPLOAD_ROOTS:
+                candidate = os.path.abspath(os.path.join(root, video_rel))
+                if os.path.commonpath([os.path.abspath(root), candidate]) != os.path.abspath(root):
+                    continue
+                try:
+                    if os.path.isfile(candidate):
+                        os.remove(candidate)
+                        video_removed = True
+                except OSError as exc:
+                    logger.warning('Could not delete video file %s: %s', candidate, exc)
+
+    clear_cached_responses()
+    logger.info('Feedback %s (%s) deleted by Super Admin %s', fb.get('complaint_id'), feedback_id, current_superadmin.get('id'))
+    return {"message": "Feedback deleted", "complaint_id": fb.get('complaint_id'), "video_removed": video_removed}
+
+
 @app.put("/api/feedback/{feedback_id}/status")
 async def update_feedback_status(feedback_id: str, status_update: FeedbackStatusUpdate, authorization: str = Header(None)):
     """Update feedback status by admin or assigned officer"""

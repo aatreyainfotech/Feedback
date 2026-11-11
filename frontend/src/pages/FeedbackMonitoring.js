@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
-import { Star, Play, UserPlus } from 'lucide-react';
+import { Star, Play, UserPlus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { roleLabel, useOfficerRoles } from '../utils/officerRoles';
@@ -23,6 +23,16 @@ const canAssignOfficer = () => {
 
 const FeedbackMonitoring = () => {
   const canAssign = canAssignOfficer();
+  // Deleting a feedback (record, video and WhatsApp logs) is for the Super Admin only.
+  const canDelete = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null')?.role === 'superadmin';
+    } catch {
+      return false;
+    }
+  })();
+  const showActions = canAssign || canDelete;
+  const [deletingId, setDeletingId] = useState(null);
   const { roles } = useOfficerRoles();
   const [feedback, setFeedback] = useState([]);
   const [temples, setTemples] = useState([]);
@@ -135,6 +145,28 @@ const FeedbackMonitoring = () => {
     );
   };
 
+  const handleDeleteFeedback = async (item) => {
+    const ok = window.confirm(
+      `Delete feedback ${item.complaint_id} completely?
+
+Devotee: ${item.user_name || '-'}
+Temple: ${item.temple_name || '-'}
+
+The feedback, its video and its WhatsApp log entries are removed. This cannot be undone.`
+    );
+    if (!ok) return;
+    setDeletingId(item.id);
+    try {
+      await api.delete(`/feedback/${item.id}`);
+      toast.success(`Feedback ${item.complaint_id} deleted`);
+      fetchFeedback();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to delete feedback');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleAssignOfficer = async () => {
     if (!selectedOfficer) {
       toast.error('Please select an officer');
@@ -232,7 +264,7 @@ const FeedbackMonitoring = () => {
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider text-center">
                 Video
               </TableHead>
-              {canAssign && (
+              {showActions && (
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider text-center">
                 Action
               </TableHead>
@@ -283,8 +315,10 @@ const FeedbackMonitoring = () => {
                     <span className="text-sm text-gray-400">No video</span>
                   )}
                 </TableCell>
-                {canAssign && (
+                {showActions && (
                 <TableCell className="text-center">
+                  <div className="flex items-center justify-center gap-2">
+                  {canAssign && (
                   <Button
                     size="sm"
                     onClick={() => {
@@ -297,6 +331,21 @@ const FeedbackMonitoring = () => {
                     <UserPlus size={16} className="mr-1" />
                     {item.assigned_officer_name ? 'Reassign' : 'Assign'}
                   </Button>
+                  )}
+                  {canDelete && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDeleteFeedback(item)}
+                      disabled={deletingId === item.id}
+                      data-testid={`delete-feedback-${item.id}`}
+                      title="Delete this feedback completely"
+                      className="text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  )}
+                  </div>
                 </TableCell>
                 )}
               </TableRow>
