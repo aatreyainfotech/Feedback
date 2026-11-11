@@ -895,6 +895,7 @@ class AdminCreate(BaseModel):
     mobile: Optional[str] = None
     role: Optional[str] = "admin"  # 'admin' or 'superadmin'
     permissions: Optional[List[str]] = None
+    temple_id: Optional[str] = None  # admin limited to one temple; empty / 'all' = all temples
 
 class AdminUpdate(BaseModel):
     username: Optional[str] = None
@@ -903,6 +904,7 @@ class AdminUpdate(BaseModel):
     mobile: Optional[str] = None
     role: Optional[str] = None
     permissions: Optional[List[str]] = None
+    temple_id: Optional[str] = None  # '' or 'all' = all temples
 
 class TempleCreate(BaseModel):
     name: str
@@ -1050,6 +1052,45 @@ async def get_current_superadmin(authorization: str = Header(None)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+def _admin_temple_id(user_id) -> Optional[str]:
+    """The one temple an admin is limited to (None = all temples). Read fresh from the users table."""
+    if not user_id:
+        return None
+    try:
+        row = execute_query("SELECT temple_id FROM users WHERE id = ?", (str(user_id),), fetch_one=True)
+    except Exception:
+        return None
+    value = (row or {}).get('temple_id')
+    return str(value).strip().lower() if value and str(value).strip() else None
+
+
+def admin_scope_from_header(authorization: Optional[str]) -> Optional[str]:
+    """Temple id when the caller is an admin limited to one temple; None for everyone else
+    (Super Admin, all-temple admins, kiosks / devotees without an admin token)."""
+    if not authorization:
+        return None
+    try:
+        payload = jwt.decode(authorization.replace("Bearer ", ""), SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("role") != "admin":
+        return None
+    return _admin_temple_id(payload.get("sub"))
+
+
+def _same_id(a, b) -> bool:
+    return bool(a) and bool(b) and str(a).strip().lower() == str(b).strip().lower()
+
+
+def _normalize_admin_temple(temple_id: Optional[str]) -> Optional[str]:
+    if temple_id is None or str(temple_id).strip().lower() in ('', 'all'):
+        return None
+    temple = execute_query("SELECT id FROM temples WHERE id = ?", (temple_id,), fetch_one=True)
+    if not temple:
+        raise HTTPException(status_code=400, detail="Temple not found")
+    return str(temple['id']).lower()
+
+
 async def get_current_officer(authorization: str = Header(None)):
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing token")
@@ -1107,6 +1148,11 @@ async def login(user_data: UserLogin):
         permissions = []
     if role == 'superadmin':
         permissions = ALL_ADMIN_PERMISSIONS
+    admin_temple_id = None if role == 'superadmin' else _admin_temple_id(user['id'])
+    admin_temple_name = None
+    if admin_temple_id:
+        trow = execute_query("SELECT name FROM temples WHERE id = ?", (admin_temple_id,), fetch_one=True)
+        admin_temple_name = trow['name'] if trow else None
 
     access_token = create_access_token(
         data={"sub": str(user['id']), "role": role}
@@ -1121,6 +1167,8 @@ async def login(user_data: UserLogin):
             "email": user['email'],
             "role": role,
             "permissions": permissions,
+            "temple_id": admin_temple_id,
+            "temple_name": admin_temple_name,
         }
     }
 
@@ -1172,6 +1220,12 @@ def ensure_account_schema():
         IF COL_LENGTH('users', 'mobile') IS NULL
         BEGIN
             ALTER TABLE users ADD mobile NVARCHAR(20) NULL;
+        END
+        """,
+        """
+        IF COL_LENGTH('users', 'temple_id') IS NULL
+        BEGIN
+            ALTER TABLE users ADD temple_id NVARCHAR(36) NULL;
         END
         """,
         """
@@ -1355,6 +1409,7 @@ def _serialize_admin(row: dict) -> dict:
         "mobile": row.get('mobile'),
         "role": role,
         "permissions": perms,
+        "temple_id": (str(row['temple_id']).lower() if row.get('temple_id') else None) if role != 'superadmin' else None,
         "created_at": row['created_at'].isoformat() if row.get('created_at') else None,
     }
 
@@ -1363,7 +1418,7 @@ def _serialize_admin(row: dict) -> dict:
 async def list_admins(current_superadmin = Depends(get_current_superadmin)):
     """List all admin / super admin users (Super Admin only)."""
     rows = execute_query(
-        "SELECT id, username, email, mobile, role, permissions, created_at FROM users ORDER BY created_at DESC",
+        "SELECT id, username, email, mobile, role, permissions, temple_id, created_at FROM users ORDER BY created_at DESC",
         fetch_all=True,
     ) or []
     return [_serialize_admin(r) for r in rows]
@@ -1389,13 +1444,14 @@ async def create_admin(payload: AdminCreate, current_superadmin = Depends(get_cu
         perms = ALL_ADMIN_PERMISSIONS
 
     mobile = normalize_mobile(payload.mobile)
+    temple_id = None if role == "superadmin" else _normalize_admin_temple(payload.temple_id)
     new_id = str(uuid.uuid4())
     execute_query(
-        """INSERT INTO users (id, username, email, mobile, password, role, permissions)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (new_id, payload.username, payload.email, mobile, hash_password(payload.password), role, json.dumps(perms))
+        """INSERT INTO users (id, username, email, mobile, password, role, permissions, temple_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (new_id, payload.username, payload.email, mobile, hash_password(payload.password), role, json.dumps(perms), temple_id)
     )
-    return {"id": new_id, "username": payload.username, "email": payload.email, "mobile": mobile, "role": role, "permissions": perms}
+    return {"id": new_id, "username": payload.username, "email": payload.email, "mobile": mobile, "role": role, "permissions": perms, "temple_id": temple_id}
 
 
 @app.put("/api/admins/{admin_id}")
@@ -1426,6 +1482,11 @@ async def update_admin(admin_id: str, payload: AdminUpdate, current_superadmin =
         if effective_role == "superadmin":
             perms = ALL_ADMIN_PERMISSIONS
         fields.append("permissions = ?"); params.append(json.dumps(perms))
+
+    if effective_role == "superadmin":
+        fields.append("temple_id = NULL")
+    elif payload.temple_id is not None:
+        fields.append("temple_id = ?"); params.append(_normalize_admin_temple(payload.temple_id))
 
     if not fields:
         return {"message": "No changes"}
@@ -1471,8 +1532,11 @@ async def delete_admin(admin_id: str, current_superadmin = Depends(get_current_s
 # =====================================================
 
 @app.get("/api/temples")
-async def get_temples():
-    """Get all temples."""
+async def get_temples(authorization: str = Header(None)):
+    """Get all temples (an admin limited to one temple gets only that temple)."""
+    scope = admin_scope_from_header(authorization)
+    if scope:
+        return [t for t in await get_temples(None) if _same_id(t['id'], scope)]
     cache_key = "temples:list"
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -1633,8 +1697,11 @@ async def register_tablet(data: RegisterTablet):
 # =====================================================
 
 @app.get("/api/officers")
-async def get_officers():
-    """Get all officers."""
+async def get_officers(authorization: str = Header(None)):
+    """Get all officers (an admin limited to one temple gets that temple's and the all-temple officers)."""
+    scope = admin_scope_from_header(authorization)
+    if scope:
+        return [o for o in await get_officers(None) if not o['temple_id'] or _same_id(o['temple_id'], scope)]
     cache_key = "officers:list"
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -1669,6 +1736,10 @@ async def create_officer(officer: OfficerCreate, current_admin = Depends(get_cur
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
     
+    scope = _admin_temple_id(current_admin.get('id')) if current_admin.get('role') == 'admin' else None
+    if scope:
+        officer.temple_id = scope  # a temple admin adds officers only for their temple
+
     # Get temple name
     temple_name = None
     if officer.temple_id in ('all', '', None):
@@ -1861,8 +1932,12 @@ async def get_feedback(
     officer_id: Optional[str] = None,
     limit: Optional[int] = Query(None, ge=1, le=FEEDBACK_QUERY_LIMIT_MAX),
     offset: int = Query(0, ge=0),
+    authorization: str = Header(None),
 ):
     """Get feedback quickly with optional filters and pagination."""
+    scope = admin_scope_from_header(authorization)
+    if scope:
+        temple_id = scope  # an admin limited to one temple sees only that temple's feedback
     return _query_feedback(
         temple_id=temple_id,
         status=status,
@@ -2067,6 +2142,13 @@ async def update_feedback_status(feedback_id: str, status_update: FeedbackStatus
     if role not in ["admin", "officer"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
+    if role == "admin":
+        scope = _admin_temple_id(user_id)
+        if scope:
+            fb = execute_query("SELECT temple_id FROM feedback WHERE id = ?", (feedback_id,), fetch_one=True)
+            if not fb or not _same_id(fb.get('temple_id'), scope):
+                raise HTTPException(status_code=403, detail="This feedback belongs to another temple")
+
     if role == "officer":
         assigned = execute_query("SELECT officer_id FROM feedback WHERE id = ?", (feedback_id,), fetch_one=True)
         if not assigned or not assigned.get("officer_id") or str(assigned.get("officer_id")) != str(user_id):
@@ -2105,6 +2187,14 @@ async def assign_officer(feedback_id: str, assign: FeedbackAssign, current_admin
             perms = []
         if "feedback_assign" not in perms:
             raise HTTPException(status_code=403, detail="You do not have permission to assign EO / Officer. Ask the Super Admin.")
+        scope = _admin_temple_id(current_admin.get("id"))
+        if scope:
+            fb = execute_query("SELECT temple_id FROM feedback WHERE id = ?", (feedback_id,), fetch_one=True)
+            if not fb or not _same_id(fb.get('temple_id'), scope):
+                raise HTTPException(status_code=403, detail="This feedback belongs to another temple")
+            off = execute_query("SELECT temple_id FROM officers WHERE id = ?", (assign.officer_id,), fetch_one=True)
+            if not off or (off.get('temple_id') and not _same_id(off.get('temple_id'), scope)):
+                raise HTTPException(status_code=403, detail="Choose an EO / Officer of your temple")
     # Get officer name
     officer = execute_query("SELECT name FROM officers WHERE id = ?", (assign.officer_id,), fetch_one=True)
     officer_name = officer['name'] if officer else None
@@ -2125,6 +2215,9 @@ async def assign_officer(feedback_id: str, assign: FeedbackAssign, current_admin
 @app.get("/api/stats")
 async def get_stats(current_admin = Depends(get_current_admin)):
     """Get dashboard statistics with minimal database round-trips."""
+    scope = _admin_temple_id(current_admin.get('id')) if current_admin.get('role') == 'admin' else None
+    if scope:
+        return _temple_stats(scope)
     cache_key = "stats:admin"
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -2165,6 +2258,41 @@ async def get_stats(current_admin = Depends(get_current_admin)):
     )
     
     stats["temple_stats"] = [{"_id": t["temple"], "count": t["feedback"]} for t in temple_stats]
+    set_cached_response(cache_key, stats, ttl=10)
+    return stats
+
+
+def _temple_stats(temple_id: str):
+    """Dashboard numbers for an admin limited to one temple."""
+    cache_key = f"stats:temple:{temple_id}"
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        return cached
+    summary = execute_query(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM officers WHERE temple_id = ?) AS total_officers,
+            COUNT(*) AS total_feedback,
+            COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END), 0) AS in_progress,
+            COALESCE(SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END), 0) AS resolved,
+            COALESCE(SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END), 0) AS rejected
+        FROM feedback WHERE temple_id = ?
+        """,
+        (temple_id, temple_id),
+        fetch_one=True,
+    ) or {}
+    temple = execute_query("SELECT name FROM temples WHERE id = ?", (temple_id,), fetch_one=True)
+    stats = {
+        "total_temples": 1 if temple else 0,
+        "total_officers": summary.get('total_officers', 0),
+        "total_feedback": summary.get('total_feedback', 0),
+        "pending": summary.get('pending', 0),
+        "in_progress": summary.get('in_progress', 0),
+        "resolved": summary.get('resolved', 0),
+        "rejected": summary.get('rejected', 0),
+        "temple_stats": [{"_id": temple['name'], "count": summary.get('total_feedback', 0)}] if temple else [],
+    }
     set_cached_response(cache_key, stats, ttl=10)
     return stats
 
@@ -2312,16 +2440,25 @@ async def get_dashboard_officer_stats(current_officer = Depends(get_current_offi
 
 @app.get("/api/whatsapp-logs")
 async def get_whatsapp_logs(current_admin = Depends(get_current_admin)):
-    """Get all WhatsApp logs."""
-    cache_key = "whatsapp-logs:list"
+    """Get all WhatsApp logs (an admin limited to one temple gets only that temple's)."""
+    scope = _admin_temple_id(current_admin.get('id')) if current_admin.get('role') == 'admin' else None
+    cache_key = f"whatsapp-logs:list:{scope or 'all'}"
     cached = get_cached_response(cache_key)
     if cached is not None:
         return cached
 
-    logs = execute_query(
-        "SELECT id, feedback_id, phone_number, message, status, message_type, created_at FROM whatsapp_logs ORDER BY created_at DESC",
-        fetch_all=True,
-    )
+    if scope:
+        logs = execute_query(
+            "SELECT id, feedback_id, phone_number, message, status, message_type, created_at FROM whatsapp_logs "
+            "WHERE feedback_id IN (SELECT id FROM feedback WHERE temple_id = ?) ORDER BY created_at DESC",
+            (scope,),
+            fetch_all=True,
+        )
+    else:
+        logs = execute_query(
+            "SELECT id, feedback_id, phone_number, message, status, message_type, created_at FROM whatsapp_logs ORDER BY created_at DESC",
+            fetch_all=True,
+        )
     response = [
         {
             "id": str(log['id']),

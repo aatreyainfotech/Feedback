@@ -34,6 +34,7 @@ const emptyForm = {
   password: '',
   role: 'admin',
   permissions: ['dashboard'],
+  temple_id: 'all',
 };
 
 const SuperAdmin = () => {
@@ -42,6 +43,7 @@ const SuperAdmin = () => {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [temples, setTemples] = useState([]);
 
   const fetchAdmins = async () => {
     try {
@@ -56,7 +58,10 @@ const SuperAdmin = () => {
 
   useEffect(() => {
     fetchAdmins();
+    api.get('/temples').then((res) => setTemples(res.data || [])).catch(() => setTemples([]));
   }, []);
+
+  const templeName = (id) => temples.find((t) => String(t.id).toLowerCase() === String(id || '').toLowerCase())?.name;
 
   const togglePerm = (key) => {
     setForm((f) => {
@@ -83,6 +88,7 @@ const SuperAdmin = () => {
       password: '',
       role: admin.role || 'admin',
       permissions: admin.role === 'superadmin' ? ALL_PERMISSIONS.map((p) => p.key) : (admin.permissions || []),
+      temple_id: admin.temple_id ? String(admin.temple_id).toLowerCase() : 'all',
     });
     setOpen(true);
   };
@@ -92,7 +98,8 @@ const SuperAdmin = () => {
     try {
       const payload = { ...form };
       if (form.role === 'superadmin') {
-        payload.permissions = PERMISSIONS.map((p) => p.key);
+        payload.permissions = ALL_PERMISSIONS.map((p) => p.key);
+        payload.temple_id = 'all';
       }
       if (editing) {
         if (!payload.password) delete payload.password;
@@ -202,6 +209,23 @@ const SuperAdmin = () => {
               </div>
               {form.role !== 'superadmin' && (
                 <div>
+                  <Label className="text-[#721C24]">Temple</Label>
+                  <Select value={form.temple_id || 'all'} onValueChange={(v) => setForm({ ...form, temple_id: v })}>
+                    <SelectTrigger className="mt-1.5" data-testid="admin-temple-select"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-white">
+                      <SelectItem value="all">All Temples</SelectItem>
+                      {temples.map((t) => (
+                        <SelectItem key={t.id} value={String(t.id).toLowerCase()}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-[#4A5568] mt-1">
+                    With one temple, this admin sees only that temple's feedback, officers, reports and dashboard.
+                  </p>
+                </div>
+              )}
+              {form.role !== 'superadmin' && (
+                <div>
                   <Label className="text-[#721C24]">Sidebar Permissions</Label>
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     {PERMISSIONS.map((p) => (
@@ -259,6 +283,7 @@ const SuperAdmin = () => {
                 <TableHead className="text-[#721C24] uppercase text-xs">Email</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Mobile</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Role</TableHead>
+                <TableHead className="text-[#721C24] uppercase text-xs">Temple</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs">Permissions</TableHead>
                 <TableHead className="text-[#721C24] uppercase text-xs text-right">Actions</TableHead>
               </TableRow>
@@ -273,6 +298,9 @@ const SuperAdmin = () => {
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${a.role === 'superadmin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                       {a.role === 'superadmin' ? 'Super Admin' : 'Admin'}
                     </span>
+                  </TableCell>
+                  <TableCell className="text-[#4A5568] text-sm" data-testid={`admin-temple-${a.id}`}>
+                    {a.role === 'superadmin' || !a.temple_id ? 'All Temples' : (templeName(a.temple_id) || 'Temple removed')}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">

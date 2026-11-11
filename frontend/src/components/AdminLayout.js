@@ -98,6 +98,9 @@ const AdminLayout = () => {
           <div className="mb-8 mt-12 md:mt-0">
             <h1 className="text-2xl font-bold text-[#F4C430]">Temple Admin</h1>
             <p className="text-sm text-white/70 mt-1">Feedback Management</p>
+            {authUser?.role !== 'superadmin' && authUser?.temple_name && (
+              <p data-testid="admin-temple-name" className="text-sm text-[#F4C430] font-semibold mt-2 leading-snug">{authUser.temple_name}</p>
+            )}
           </div>
 
           <nav className="flex-1 space-y-2 custom-scrollbar overflow-y-auto">
