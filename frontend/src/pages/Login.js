@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { API } from '../utils/api';
+import { API, invalidateApiCache } from '../utils/api';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -50,6 +50,7 @@ const Login = () => {
     try {
       const { data, home } = await authenticate({ email, password });
 
+      invalidateApiCache();
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       toast.success('Login successful!');

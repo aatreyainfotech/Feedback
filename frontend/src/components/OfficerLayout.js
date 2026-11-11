@@ -1,4 +1,5 @@
 import { Outlet, useNavigate } from 'react-router-dom';
+import { invalidateApiCache } from '../utils/api';
 import { useEffect, useState } from 'react';
 import { LogOut, Menu, X } from 'lucide-react';
 import Header from './Header';
@@ -34,6 +35,7 @@ const OfficerLayout = () => {
   }, [navigate]);
 
   const handleLogout = () => {
+    invalidateApiCache();
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     navigate('/login');

@@ -1832,10 +1832,10 @@ async def delete_officer_role_def(role_key: str, current_superadmin = Depends(ge
 
 @app.get("/api/officers")
 async def get_officers(authorization: str = Header(None)):
-    """Get all officers (an admin limited to one temple gets that temple's and the all-temple officers)."""
+    """Get all officers (an admin limited to one temple gets only that temple's officers)."""
     scope = admin_scope_from_header(authorization)
     if scope:
-        return [o for o in await get_officers(None) if not o['temple_id'] or _same_id(o['temple_id'], scope)]
+        return [o for o in await get_officers(None) if _same_id(o['temple_id'], scope)]
     cache_key = "officers:list"
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -2353,7 +2353,7 @@ async def assign_officer(feedback_id: str, assign: FeedbackAssign, current_admin
             if not fb or not _same_id(fb.get('temple_id'), scope):
                 raise HTTPException(status_code=403, detail="This feedback belongs to another temple")
             off = execute_query("SELECT temple_id FROM officers WHERE id = ?", (assign.officer_id,), fetch_one=True)
-            if not off or (off.get('temple_id') and not _same_id(off.get('temple_id'), scope)):
+            if not off or not _same_id(off.get('temple_id'), scope):
                 raise HTTPException(status_code=403, detail="Choose an EO / Officer of your temple")
     # Get officer name
     officer = execute_query("SELECT name FROM officers WHERE id = ?", (assign.officer_id,), fetch_one=True)

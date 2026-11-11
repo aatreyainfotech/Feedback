@@ -87,7 +87,14 @@ export const API = `${BACKEND_URL}/api`;
 const getCacheKey = (url, config = {}) => {
   const baseUrl = normalizeUrl(config.baseURL || API);
   const paramsKey = buildParamsString(config.params || {});
-  return `${baseUrl}|${url}|${paramsKey}`;
+  // Per signed-in user: a temple admin must never get the Super Admin's cached lists.
+  let tokenKey = '';
+  try {
+    tokenKey = (localStorage.getItem('token') || '').slice(-16);
+  } catch {
+    tokenKey = '';
+  }
+  return `${baseUrl}|${tokenKey}|${url}|${paramsKey}`;
 };
 
 const getCacheTtl = (url, explicitTtl) => {
@@ -231,6 +238,7 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
+      invalidateApiCache();
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
