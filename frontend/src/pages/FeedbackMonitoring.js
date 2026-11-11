@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
-import { Star, Play, UserPlus, Trash2 } from 'lucide-react';
+import { Star, Play, UserPlus, Trash2, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { roleLabel, useOfficerRoles } from '../utils/officerRoles';
@@ -33,6 +33,7 @@ const FeedbackMonitoring = () => {
   })();
   const showActions = canAssign || canDelete;
   const [deletingId, setDeletingId] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const { roles } = useOfficerRoles();
   const [feedback, setFeedback] = useState([]);
   const [temples, setTemples] = useState([]);
@@ -145,20 +146,17 @@ const FeedbackMonitoring = () => {
     );
   };
 
-  const handleDeleteFeedback = async (item) => {
-    const ok = window.confirm(
-      `Delete feedback ${item.complaint_id} completely?
+  // Step 1: open the confirmation window. Step 2 (confirmDeleteFeedback) deletes.
+  const handleDeleteFeedback = (item) => setConfirmDelete(item);
 
-Devotee: ${item.user_name || '-'}
-Temple: ${item.temple_name || '-'}
-
-The feedback, its video and its WhatsApp log entries are removed. This cannot be undone.`
-    );
-    if (!ok) return;
+  const confirmDeleteFeedback = async () => {
+    const item = confirmDelete;
+    if (!item) return;
     setDeletingId(item.id);
     try {
       await api.delete(`/feedback/${item.id}`);
       toast.success(`Feedback ${item.complaint_id} deleted`);
+      setConfirmDelete(null);
       fetchFeedback();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to delete feedback');
@@ -475,6 +473,49 @@ The feedback, its video and its WhatsApp log entries are removed. This cannot be
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Delete feedback confirmation (Super Admin) */}
+      <Dialog open={canDelete && Boolean(confirmDelete)} onOpenChange={(isOpen) => { if (!isOpen && !deletingId) setConfirmDelete(null); }}>
+        <DialogContent className="bg-white max-w-md" data-testid="delete-feedback-dialog">
+          <DialogHeader>
+            <div className="mx-auto w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mb-2">
+              <AlertTriangle className="text-red-600" size={28} />
+            </div>
+            <DialogTitle className="text-[#721C24] text-2xl text-center">Delete Feedback?</DialogTitle>
+          </DialogHeader>
+          {confirmDelete && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#FDFBF7] p-4 space-y-2 text-sm">
+                <div className="flex justify-between gap-3"><span className="text-[#4A5568]">Feedback ID</span><span className="font-bold text-[#721C24] break-all text-right">{confirmDelete.complaint_id}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-[#4A5568]">Devotee</span><span className="font-medium text-right">{confirmDelete.user_name || '-'}{confirmDelete.user_mobile ? ` · ${confirmDelete.user_mobile}` : ''}</span></div>
+                <div className="flex justify-between gap-3"><span className="text-[#4A5568]">Temple</span><span className="font-medium text-right">{confirmDelete.temple_name || '-'}</span></div>
+              </div>
+              <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+                The feedback, its video and its WhatsApp log entries will be removed permanently. This cannot be undone.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmDelete(null)}
+                  disabled={Boolean(deletingId)}
+                  className="border-2 border-[#E2E8F0] text-[#4A5568] py-5"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={confirmDeleteFeedback}
+                  disabled={Boolean(deletingId)}
+                  data-testid="confirm-delete-feedback"
+                  className="bg-red-600 hover:bg-red-700 text-white py-5"
+                >
+                  <Trash2 size={16} className="mr-2" />
+                  {deletingId ? 'Deleting...' : 'Delete'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Assign Officer Dialog */}
       {canAssign && assigningFeedback && (
