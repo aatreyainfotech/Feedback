@@ -1,6 +1,6 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings, Menu, X, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, List, MessageSquare, MessageCircle, FileText, LogOut, Settings, Menu, X, ShieldCheck, QrCode } from 'lucide-react';
 import Header from './Header';
 import Footer from './Footer';
 
@@ -60,6 +60,7 @@ const AdminLayout = () => {
     : allMenuItems.filter((item) => userPerms.length === 0 || userPerms.includes(item.key));
 
   if (isSuperAdmin) {
+    menuItems.push({ key: 'qr_codes', path: '/admin/qr-codes', icon: QrCode, label: 'QR Codes' });
     menuItems.push({ key: 'super_admin', path: '/admin/super-admin', icon: ShieldCheck, label: 'Super Admin' });
   }
 

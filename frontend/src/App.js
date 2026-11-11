@@ -11,6 +11,7 @@ import WhatsAppLogs from "./pages/WhatsAppLogs";
 import Reports from "./pages/Reports";
 import Administration from "./pages/Administration";
 import SuperAdmin from "./pages/SuperAdmin";
+import TempleQrCodes from "./pages/TempleQrCodes";
 import OfficerDashboard from "./pages/OfficerDashboard";
 import DisplayScreen from "./pages/DisplayScreen";
 import PublicFeedbackSubmit from "./pages/PublicFeedbackSubmit";
@@ -61,6 +62,7 @@ function App() {
             <Route path="reports" element={<Reports />} />
             <Route path="administration" element={<Administration />} />
             <Route path="super-admin" element={<SuperAdmin />} />
+            <Route path="qr-codes" element={<TempleQrCodes />} />
           </Route>
           
           {/* Officer Routes */}
