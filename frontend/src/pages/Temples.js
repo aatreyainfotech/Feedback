@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Plus, Trash2, Edit, Upload, QrCode } from 'lucide-react';
-import TempleQrDialog from '../components/TempleQrDialog';
+import TempleQrDialog, { isSuperAdminUser } from '../components/TempleQrDialog';
 import { toast } from 'sonner';
 
 const Temples = () => {
@@ -19,6 +19,7 @@ const Temples = () => {
   const [editingTemple, setEditingTemple] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [qrTemple, setQrTemple] = useState(null);
+  const canQr = isSuperAdminUser();
   const [formData, setFormData] = useState({
     name: '',
     location: '',
@@ -287,6 +288,7 @@ const Temples = () => {
                 <TableCell className="text-[#4A5568]">{temple.location}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
+                    {canQr && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -298,6 +300,7 @@ const Temples = () => {
                       <QrCode size={16} className="mr-1" />
                       QR
                     </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

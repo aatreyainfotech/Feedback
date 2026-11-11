@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import QRCode from 'qrcode';
 import api from '../utils/api';
 import { Button } from '../components/ui/button';
-import TempleQrDialog, { templeFeedbackUrl } from '../components/TempleQrDialog';
+import TempleQrDialog, { isSuperAdminUser, renderTempleQr } from '../components/TempleQrDialog';
 import { QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -10,9 +9,11 @@ const TempleQrCard = ({ temple, onOpen }) => {
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
-    QRCode.toDataURL(templeFeedbackUrl(temple), { width: 240, margin: 1 })
-      .then(setPreview)
+    let cancelled = false;
+    renderTempleQr(temple, 320)
+      .then((canvas) => { if (!cancelled) setPreview(canvas.toDataURL('image/png')); })
       .catch(() => setPreview(null));
+    return () => { cancelled = true; };
   }, [temple]);
 
   return (
@@ -36,13 +37,22 @@ const TempleQrCodes = () => {
   const [temples, setTemples] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const allowed = isSuperAdminUser();
 
   useEffect(() => {
+    if (!allowed) {
+      setLoading(false);
+      return;
+    }
     api.get('/temples')
       .then((res) => setTemples(res.data))
       .catch(() => toast.error('Failed to load temples'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [allowed]);
+
+  if (!allowed) {
+    return <div className="text-center py-16 text-[#721C24] font-semibold">Temple QR codes are available to the Super Admin only.</div>;
+  }
 
   if (loading) return <div className="text-center py-8">Loading...</div>;
 

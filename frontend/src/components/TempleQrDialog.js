@@ -4,12 +4,66 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Copy, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { API } from '../utils/api';
 
 // Fixed so a QR made from the tablet app or a dev machine still points at the public site.
 const PUBLIC_SITE_URL = process.env.REACT_APP_PUBLIC_SITE_URL || 'https://fb.aatreya.org';
 const MAROON = '#721C24';
 
 export const templeFeedbackUrl = (temple) => `${PUBLIC_SITE_URL}/feedback/${String(temple.id).toLowerCase()}`;
+
+// QR codes are made and downloaded only by the Super Admin.
+export const isSuperAdminUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null')?.role === 'superadmin';
+  } catch {
+    return false;
+  }
+};
+
+const loadLogo = (temple) => new Promise((resolve) => {
+  if (!temple?.logo_path) return resolve(null);
+  const img = new Image();
+  img.crossOrigin = 'anonymous'; // the API sends Access-Control-Allow-Origin, so the PNG can still be saved
+  img.onload = () => resolve(img);
+  img.onerror = () => resolve(null); // no logo: plain QR code
+  img.src = `${API}/files/${temple.logo_path}`;
+});
+
+// The QR code with the temple logo in the centre. Level H keeps it readable with the centre covered.
+export const renderTempleQr = async (temple, size) => {
+  const canvas = document.createElement('canvas');
+  const logo = await loadLogo(temple);
+  await QRCode.toCanvas(canvas, templeFeedbackUrl(temple), {
+    width: size,
+    margin: 2,
+    errorCorrectionLevel: logo ? 'H' : 'M',
+    color: { dark: '#2B0A0E', light: '#FFFFFF' },
+  });
+  if (logo) {
+    const ctx = canvas.getContext('2d');
+    const c = canvas.width / 2;
+    const badge = canvas.width * 0.24; // under 30% of the code, the most level H can lose
+    ctx.beginPath();
+    ctx.arc(c, c, badge / 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+    ctx.lineWidth = Math.max(2, badge * 0.04);
+    ctx.strokeStyle = MAROON;
+    ctx.stroke();
+    const inner = badge * 0.8;
+    const scale = Math.min(inner / logo.width, inner / logo.height);
+    const w = logo.width * scale;
+    const h = logo.height * scale;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(c, c, inner / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(logo, c - w / 2, c - h / 2, w, h);
+    ctx.restore();
+  }
+  return canvas;
+};
 
 const wrapLines = (ctx, text, maxWidth) => {
   const lines = [];
@@ -57,8 +111,7 @@ const renderPoster = async (temple, url) => {
   }
 
   const qrSize = 900;
-  const qrCanvas = document.createElement('canvas');
-  await QRCode.toCanvas(qrCanvas, url, { width: qrSize, margin: 2, errorCorrectionLevel: 'M' });
+  const qrCanvas = await renderTempleQr(temple, qrSize);
   const qrTop = Math.max(y + 40, 420);
   ctx.drawImage(qrCanvas, (width - qrSize) / 2, qrTop, qrSize, qrSize);
 
@@ -74,17 +127,18 @@ const renderPoster = async (temple, url) => {
 
 const TempleQrDialog = ({ temple, onClose }) => {
   const [poster, setPoster] = useState(null);
+  const allowed = isSuperAdminUser();
   const url = temple ? templeFeedbackUrl(temple) : '';
 
   useEffect(() => {
     setPoster(null);
-    if (!temple) return undefined;
+    if (!temple || !allowed) return undefined;
     let cancelled = false;
     renderPoster(temple, templeFeedbackUrl(temple))
       .then((dataUrl) => { if (!cancelled) setPoster(dataUrl); })
       .catch(() => toast.error('Failed to create QR code'));
     return () => { cancelled = true; };
-  }, [temple]);
+  }, [temple, allowed]);
 
   const fileName = temple ? `feedback-qr-${temple.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.png` : '';
 
@@ -98,7 +152,7 @@ const TempleQrDialog = ({ temple, onClose }) => {
   };
 
   return (
-    <Dialog open={Boolean(temple)} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+    <Dialog open={Boolean(temple) && allowed} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
       <DialogContent className="bg-white max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-[#721C24] text-2xl">Feedback QR Code</DialogTitle>
