@@ -876,6 +876,8 @@ ALL_ADMIN_PERMISSIONS = [
     "whatsapp_logs",
     "reports",
     "administration",
+    # Action permission (not a sidebar page): Feedback Monitoring > Action > Assign / Reassign EO / Officer
+    "feedback_assign",
 ]
 
 class ForgotPasswordRequest(BaseModel):
@@ -2094,7 +2096,15 @@ async def update_feedback_status(feedback_id: str, status_update: FeedbackStatus
 
 @app.put("/api/feedback/{feedback_id}/assign")
 async def assign_officer(feedback_id: str, assign: FeedbackAssign, current_admin = Depends(get_current_admin)):
-    """Assign officer to feedback"""
+    """Assign officer to feedback (Super Admin, or an admin given the feedback_assign permission)"""
+    if current_admin.get("role") != "superadmin":
+        row = execute_query("SELECT permissions FROM users WHERE id = ?", (current_admin.get("id"),), fetch_one=True)
+        try:
+            perms = json.loads(row['permissions']) if row and row.get('permissions') else []
+        except Exception:
+            perms = []
+        if "feedback_assign" not in perms:
+            raise HTTPException(status_code=403, detail="You do not have permission to assign EO / Officer. Ask the Super Admin.")
     # Get officer name
     officer = execute_query("SELECT name FROM officers WHERE id = ?", (assign.officer_id,), fetch_one=True)
     officer_name = officer['name'] if officer else None

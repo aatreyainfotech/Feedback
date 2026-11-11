@@ -21,6 +21,12 @@ const PERMISSIONS = [
   { key: 'administration', label: 'Administration' },
 ];
 
+// Action permissions (buttons inside a page), given only by the Super Admin.
+const ACTION_PERMISSIONS = [
+  { key: 'feedback_assign', label: 'Assign EO / Officer', hint: 'Feedback Monitoring > Action: assign or reassign a feedback to an EO / Officer' },
+];
+const ALL_PERMISSIONS = [...PERMISSIONS, ...ACTION_PERMISSIONS];
+
 const emptyForm = {
   username: '',
   email: '',
@@ -76,7 +82,7 @@ const SuperAdmin = () => {
       mobile: admin.mobile || '',
       password: '',
       role: admin.role || 'admin',
-      permissions: admin.role === 'superadmin' ? PERMISSIONS.map((p) => p.key) : (admin.permissions || []),
+      permissions: admin.role === 'superadmin' ? ALL_PERMISSIONS.map((p) => p.key) : (admin.permissions || []),
     });
     setOpen(true);
   };
@@ -210,6 +216,23 @@ const SuperAdmin = () => {
                       </label>
                     ))}
                   </div>
+                  <Label className="text-[#721C24] block mt-4">Action Permissions</Label>
+                  <div className="mt-2 space-y-2">
+                    {ACTION_PERMISSIONS.map((p) => (
+                      <label key={p.key} data-testid={`perm-${p.key}`} className="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border border-[#F4C430]/60 bg-[#FFF9E6]/60 hover:bg-[#FFF9E6]">
+                        <input
+                          type="checkbox"
+                          checked={form.permissions.includes(p.key)}
+                          onChange={() => togglePerm(p.key)}
+                          className="w-4 h-4 mt-0.5 text-[#721C24] rounded"
+                        />
+                        <span>
+                          <span className="font-medium text-[#721C24]">{p.label}</span>
+                          <span className="block text-xs text-[#4A5568]">{p.hint}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
               <Button type="submit" className="w-full bg-[#721C24] hover:bg-[#5A161C] text-white py-6">
@@ -255,7 +278,7 @@ const SuperAdmin = () => {
                     <div className="flex flex-wrap gap-1">
                       {(a.permissions || []).slice(0, 4).map((p) => (
                         <span key={p} className="px-2 py-0.5 bg-[#FFF9E6] text-[#721C24] rounded text-xs">
-                          {PERMISSIONS.find((x) => x.key === p)?.label || p}
+                          {ALL_PERMISSIONS.find((x) => x.key === p)?.label || p}
                         </span>
                       ))}
                       {(a.permissions || []).length > 4 && (

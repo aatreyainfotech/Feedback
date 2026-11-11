@@ -9,7 +9,20 @@ import { Star, Play, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
+// Assign / Reassign EO / Officer: the Super Admin, or an admin the Super Admin gave "Assign EO / Officer".
+const canAssignOfficer = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || 'null');
+    return user?.role === 'superadmin' || (Array.isArray(user?.permissions) && user.permissions.includes('feedback_assign'));
+  } catch {
+    return false;
+  }
+};
+
+const roleTag = (role) => (role === 'eo' ? 'EO' : role === 'supervisor' ? 'Supervisor' : 'Officer');
+
 const FeedbackMonitoring = () => {
+  const canAssign = canAssignOfficer();
   const [feedback, setFeedback] = useState([]);
   const [temples, setTemples] = useState([]);
   const [officers, setOfficers] = useState([]);
@@ -218,9 +231,11 @@ const FeedbackMonitoring = () => {
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider text-center">
                 Video
               </TableHead>
+              {canAssign && (
               <TableHead className="text-[#721C24] font-semibold uppercase text-xs tracking-wider text-center">
                 Action
               </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -267,6 +282,7 @@ const FeedbackMonitoring = () => {
                     <span className="text-sm text-gray-400">No video</span>
                   )}
                 </TableCell>
+                {canAssign && (
                 <TableCell className="text-center">
                   <Button
                     size="sm"
@@ -281,6 +297,7 @@ const FeedbackMonitoring = () => {
                     {item.assigned_officer_name ? 'Reassign' : 'Assign'}
                   </Button>
                 </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -410,12 +427,12 @@ const FeedbackMonitoring = () => {
       )}
 
       {/* Assign Officer Dialog */}
-      {assigningFeedback && (
+      {canAssign && assigningFeedback && (
         <Dialog open={!!assigningFeedback} onOpenChange={() => setAssigningFeedback(null)}>
           <DialogContent className="bg-white">
             <DialogHeader>
               <DialogTitle className="text-[#721C24] text-2xl">
-                Assign Officer to #{assigningFeedback.complaint_id}
+                Assign EO / Officer to #{assigningFeedback.complaint_id}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
@@ -431,16 +448,16 @@ const FeedbackMonitoring = () => {
               
               <div>
                 <label className="text-sm text-[#721C24] font-medium mb-2 block">
-                  Select Officer
+                  Select EO / Officer
                 </label>
                 <Select value={selectedOfficer} onValueChange={setSelectedOfficer}>
                   <SelectTrigger data-testid="officer-select">
-                    <SelectValue placeholder="Choose officer" />
+                    <SelectValue placeholder="Choose EO / officer" />
                   </SelectTrigger>
                   <SelectContent className="bg-white">
                     {officers.map((officer) => (
                       <SelectItem key={officer.id} value={officer.id}>
-                        {officer.name} {officer.temple_name ? `(${officer.temple_name})` : ''}
+                        {officer.name} - {roleTag(officer.role)} {officer.temple_name ? `(${officer.temple_name})` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -452,7 +469,7 @@ const FeedbackMonitoring = () => {
                 data-testid="confirm-assign-button"
                 className="w-full bg-[#721C24] hover:bg-[#5A161C] text-white py-6"
               >
-                Assign Officer
+                Assign
               </Button>
             </div>
           </DialogContent>
